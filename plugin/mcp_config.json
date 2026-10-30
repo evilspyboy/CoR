@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "council-of-reeds": {
-      "command": "c:\\TCHT\\Council of Reeds\\council.exe",
+    "council": {
+      "command": "council.exe",
       "type": "stdio",
       "args": [
         "--mcp"

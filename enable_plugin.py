@@ -23,3 +23,4 @@ try:
         print("Response:", resp.read().decode())
 except Exception as e:
     print("Error enabling plugin:", e)
+

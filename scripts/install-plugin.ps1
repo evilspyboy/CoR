@@ -59,3 +59,4 @@ if ($env:ANTIGRAVITY_LS_ADDRESS -and $env:ANTIGRAVITY_CSRF_TOKEN) {
 
 Write-Host "`nInstallation Complete! The Council of Reeds plugin is ready."
 Write-Host "Run 'start-council.bat' to launch the Watcher Lounge."
+

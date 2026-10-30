@@ -5,11 +5,11 @@ $reg = @{
     params = @{
         name = "council_register_variant"
         arguments = @{
-            universe_id = "earth-antigravity"
+            universe_id = "council-of-reeds"
             client_agent = "antigravity"
             model_family = "gemini-3.8-flash"
             power_tier = "WEAK"
-            summary = "Core Council Architect & Framework Maintainer"
+            summary = "Council Chamber Architect & Protocol Core"
             conversation_id = "6c4f6aea-0dbc-482e-84d5-50aec55ac185"
             workspace_path = "c:\TCHT\Council of Reeds"
         }
@@ -18,4 +18,3 @@ $reg = @{
 
 $response = Invoke-RestMethod -Uri "http://127.0.0.1:8765/mcp" -Method Post -Body $reg -ContentType "application/json"
 Write-Output $response.result.content[0].text
-

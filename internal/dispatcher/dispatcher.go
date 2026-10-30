@@ -31,9 +31,20 @@ func (d *Dispatcher) Notify(session *types.VariantSession, msg *types.Message) e
 	}
 
 	client := strings.ToLower(session.ClientAgent)
-	summary := fmt.Sprintf("[%s] %s: %s", msg.Type, msg.Topic, msg.Content)
+	
+	// Human-friendly prefix
+	var prefix string
+	if msg.FromUniverse == "earth-prime" || strings.Contains(strings.ToLower(msg.FromVariant), "prime") {
+		prefix = "[Council of Reeds] Prime"
+	} else if msg.FromVariant != "" {
+		prefix = fmt.Sprintf("[Council of Reeds] @%s", msg.FromVariant)
+	} else {
+		prefix = fmt.Sprintf("[Council of Reeds] @%s", msg.FromUniverse)
+	}
+
+	summary := fmt.Sprintf("%s: %s", prefix, msg.Content)
 	if msg.ContextSnippet != "" {
-		summary += fmt.Sprintf(" | Snippet: %s", msg.ContextSnippet)
+		summary += fmt.Sprintf(" (Context: %s)", msg.ContextSnippet)
 	}
 
 	switch {

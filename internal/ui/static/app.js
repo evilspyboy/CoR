@@ -51,24 +51,14 @@ async function fetchInitialState() {
   }
 }
 
-const targetSelect = document.getElementById("target-select");
+const autocompleteList = document.getElementById("autocomplete-list");
+
+let currentActiveVariants = [];
 
 function renderRoster(universes, activeVariants) {
+  currentActiveVariants = activeVariants;
   const activeMap = {};
   activeVariants.forEach(v => { activeMap[v.universe_id] = v; });
-
-  // Update target dropdown
-  const currentVal = targetSelect ? targetSelect.value : "@council";
-  if (targetSelect) {
-    targetSelect.innerHTML = `<option value="@council">Broadcast: @council</option>`;
-    universes.forEach(u => {
-      const opt = document.createElement("option");
-      opt.value = u.universe_id;
-      opt.textContent = `@${u.universe_id}`;
-      targetSelect.appendChild(opt);
-    });
-    targetSelect.value = currentVal;
-  }
 
   universeCount.textContent = universes.length;
   if (universes.length === 0) {
@@ -80,21 +70,20 @@ function renderRoster(universes, activeVariants) {
   universes.forEach(u => {
     const active = activeMap[u.universe_id];
     const power = active ? active.power_tier : "OFFLINE";
-    const variantTag = active ? active.variant_tag : `Epoch ${u.variant_epoch} (Offline)`;
+    const handle = active && active.variant_tag ? active.variant_tag : `Epoch ${u.variant_epoch}`;
 
     const card = document.createElement("div");
     card.className = "universe-card";
     card.style.cursor = "pointer";
-    card.title = "Click to target this universe in Gavel";
+    card.title = `Click to direct-message @${handle}`;
     card.onclick = () => {
-      if (targetSelect) targetSelect.value = u.universe_id;
-      gavelInput.focus();
+      insertMention(handle);
     };
 
     card.innerHTML = `
       <div class="title-row">
-        <span class="uname">${escapeHtml(u.universe_name || u.universe_id)}</span>
-        <span class="variant-tag">${escapeHtml(variantTag)}</span>
+        <span class="uname">@${escapeHtml(handle)}</span>
+        <span class="variant-tag">${escapeHtml(u.universe_name || u.universe_id)}</span>
       </div>
       <div class="summary">${escapeHtml(u.summary || "No summary provided")}</div>
       <div class="meta-row">
@@ -106,47 +95,75 @@ function renderRoster(universes, activeVariants) {
   });
 }
 
-function addFeedItem(msg) {
-  const item = document.createElement("div");
-  item.className = `feed-item ${msg.type || "notice"}`;
-  
-  const timeStr = msg.created_at ? new Date(msg.created_at).toLocaleTimeString() : new Date().toLocaleTimeString();
-  const source = msg.from_variant || msg.from_universe || "SYSTEM";
-  const to = msg.to_universe ? ` ➔ ${msg.to_universe}` : "";
-
-  item.innerHTML = `
-    <div class="meta">
-      <span class="time">${timeStr}</span>
-      <span class="source">[${escapeHtml(source)}${escapeHtml(to)}]</span>
-      ${msg.topic ? `<span class="topic">#${escapeHtml(msg.topic)}</span>` : ""}
-    </div>
-    <div class="content">${escapeHtml(msg.content)}</div>
-    ${msg.context_snippet ? `<pre class="snippet" style="background:#0b0f19;padding:6px;margin-top:4px;border-radius:4px;font-size:11px;overflow-x:auto;">${escapeHtml(msg.context_snippet)}</pre>` : ""}
-  `;
-
-  feedContainer.appendChild(item);
-  feedContainer.scrollTop = feedContainer.scrollHeight;
+function insertMention(handle) {
+  const current = gavelInput.value.trim();
+  if (current.startsWith("@")) {
+    // Replace existing mention
+    const parts = current.split(" ");
+    parts[0] = `@${handle}`;
+    gavelInput.value = parts.join(" ") + " ";
+  } else {
+    gavelInput.value = `@${handle} ${current}`;
+  }
+  gavelInput.focus();
+  closeAutocomplete();
 }
 
-// Reed Prime Gavel / Decree
-btnDecree.addEventListener("click", issueDecree);
-gavelInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") issueDecree();
+// Discord-style @ autocomplete
+gavelInput.addEventListener("input", () => {
+  const text = gavelInput.value;
+  const atMatch = text.match(/@(\w*)$/);
+
+  if (atMatch) {
+    const query = atMatch[1].toLowerCase();
+    const matches = currentActiveVariants.filter(v => 
+      v.variant_tag.toLowerCase().includes(query) || v.universe_id.toLowerCase().includes(query)
+    );
+
+    if (matches.length > 0) {
+      autocompleteList.innerHTML = "";
+      matches.forEach(m => {
+        const item = document.createElement("div");
+        item.className = "autocomplete-item";
+        item.innerHTML = `
+          <span class="handle">@${escapeHtml(m.variant_tag)}</span>
+          <span class="desc">${escapeHtml(m.universe_id)} (${m.power_tier})</span>
+        `;
+        item.onclick = () => {
+          gavelInput.value = text.replace(/@\w*$/, `@${m.variant_tag} `);
+          closeAutocomplete();
+          gavelInput.focus();
+        };
+        autocompleteList.appendChild(item);
+      });
+      autocompleteList.style.display = "block";
+      return;
+    }
+  }
+  closeAutocomplete();
+});
+
+function closeAutocomplete() {
+  if (autocompleteList) autocompleteList.style.display = "none";
+}
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".gavel-box")) closeAutocomplete();
 });
 
 async function issueDecree() {
   const text = gavelInput.value.trim();
   if (!text) return;
-  const target = targetSelect ? targetSelect.value : "@council";
 
   try {
     const res = await fetch("/api/decree", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decree: text, to_universe: target })
+      body: JSON.stringify({ decree: text })
     });
     if (res.ok) {
       gavelInput.value = "";
+      closeAutocomplete();
     }
   } catch (err) {
     alert("Failed to issue decree: " + err);

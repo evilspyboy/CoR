@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -125,19 +126,30 @@ func main() {
 			return
 		}
 
+		text := strings.TrimSpace(payload.Decree)
 		target := payload.ToUniverse
-		if target == "" {
-			target = "@council"
+
+		// Auto-extract @target from text prefix if present (e.g. "@Reed472-CoR Hello!")
+		if strings.HasPrefix(text, "@") {
+			parts := strings.SplitN(text, " ", 2)
+			target = parts[0]
+			if len(parts) > 1 {
+				text = parts[1]
+			} else {
+				text = ""
+			}
 		}
+
+		resolvedTarget := h.ResolveTarget(target)
 
 		decreeMsg := &types.Message{
 			FromUniverse: "earth-prime",
-			FromVariant:  "Reed Prime (The Watcher)",
-			ToUniverse:   target,
+			FromVariant:  "Prime",
+			ToUniverse:   resolvedTarget,
 			Type:         types.MsgRuling,
 			Status:       types.StatusDelivered,
 			Topic:        "Executive Decree",
-			Content:      payload.Decree,
+			Content:      text,
 			CreatedAt:    time.Now().UTC(),
 		}
 		_, _ = h.PostMessage(decreeMsg)
