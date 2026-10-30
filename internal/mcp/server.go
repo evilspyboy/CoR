@@ -78,18 +78,56 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 					},
 					"summary": map[string]interface{}{
 						"type":        "string",
-						"description": "High-level summary of what this project/universe does",
+						"description": "High-level passport summary of what this project/universe does",
+					},
+					"tech_stack": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "string",
+						},
+						"description": "Key languages, frameworks, and storage used in this universe (e.g. ['go', 'sqlite', 'react'])",
+					},
+					"interfaces_provided": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"id":           map[string]interface{}{"type": "string", "description": "Interface identifier (e.g. 'auth-api', 'telemetry-stream')"},
+								"protocol":     map[string]interface{}{"type": "string", "description": "Protocol: http-rest, grpc, json-rpc, cli, file"},
+								"description":  map[string]interface{}{"type": "string", "description": "Brief description of capability"},
+								"spec_pointer": map[string]interface{}{"type": "string", "description": "File path or doc reference"},
+							},
+							"required": []string{"id", "protocol", "description"},
+						},
+						"description": "APIs, schemas, or surfaces this universe exposes for other universes to consume",
+					},
+					"interfaces_consumed": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"source_universe": map[string]interface{}{"type": "string", "description": "Universe ID providing the interface"},
+								"interface_id":    map[string]interface{}{"type": "string", "description": "Interface identifier being consumed"},
+								"contract_notes":  map[string]interface{}{"type": "string", "description": "Notes or requirements on consumption"},
+							},
+							"required": []string{"source_universe", "interface_id"},
+						},
+						"description": "External interfaces this universe depends on",
 					},
 					"conversation_id": map[string]interface{}{
 						"type":        "string",
 						"description": "Active chat thread/conversation ID for proactive wakeups",
+					},
+					"variant_tag": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional custom variant handle (e.g. 'Reed498-COR-gpt-4o'). If omitted, auto-generated based on model and repo.",
 					},
 					"workspace_path": map[string]interface{}{
 						"type":        "string",
 						"description": "Absolute path to local project workspace root",
 					},
 				},
-				"required": []string{"universe_id"},
+				"required": []string{"universe_id", "summary"},
 			},
 		},
 		{
@@ -182,6 +220,32 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 					},
 				},
 				"required": []string{"message_id"},
+			},
+		},
+		{
+			Name:        "council_read_passport",
+			Description: "Inspect the passport, exposed interfaces, tech stack, and active variants of a Universe or @Reed variant to determine relevance before responding.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"target": map[string]interface{}{
+						"type":        "string",
+						"description": "Universe ID (e.g. 'council-of-reeds') or @variant handle (e.g. '@Reed652-COR-geminiflash3.8'). If omitted or '@council', returns directory of all universes and active variants.",
+					},
+				},
+			},
+		},
+		{
+			Name:        "council_get_roster",
+			Description: "Get the complete Chamber roster: list all active Variants currently online (their handles, models, power tiers, and universe IDs) and all registered Universes.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"active_only": map[string]interface{}{
+						"type":        "boolean",
+						"description": "If true, only returns currently connected online Variants",
+					},
+				},
 			},
 		},
 	}
@@ -311,13 +375,55 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 		convID, _ := args["conversation_id"].(string)
 		wsPath, _ := args["workspace_path"].(string)
 
+		variantTag, _ := args["variant_tag"].(string)
+
 		tier := types.PowerTier(pTier)
 		if tier == "" {
 			tier = types.PowerNominal
 		}
 
+		// Parse TechStack
+		var techStack []string
+		if rawTech, ok := args["tech_stack"].([]interface{}); ok {
+			for _, t := range rawTech {
+				if s, ok := t.(string); ok && s != "" {
+					techStack = append(techStack, s)
+				}
+			}
+		}
+
+		// Parse InterfacesProvided
+		var prov []types.InterfaceSpec
+		if rawProv, ok := args["interfaces_provided"].([]interface{}); ok {
+			for _, item := range rawProv {
+				if m, ok := item.(map[string]interface{}); ok {
+					prov = append(prov, types.InterfaceSpec{
+						ID:          fmt.Sprint(m["id"]),
+						Protocol:    fmt.Sprint(m["protocol"]),
+						Description: fmt.Sprint(m["description"]),
+						SpecPointer: fmt.Sprint(m["spec_pointer"]),
+					})
+				}
+			}
+		}
+
+		// Parse InterfacesConsumed
+		var cons []types.ConsumedInterface
+		if rawCons, ok := args["interfaces_consumed"].([]interface{}); ok {
+			for _, item := range rawCons {
+				if m, ok := item.(map[string]interface{}); ok {
+					cons = append(cons, types.ConsumedInterface{
+						SourceUniverse: fmt.Sprint(m["source_universe"]),
+						InterfaceID:    fmt.Sprint(m["interface_id"]),
+						ContractNotes:  fmt.Sprint(m["contract_notes"]),
+					})
+				}
+			}
+		}
+
 		session := &types.VariantSession{
 			UniverseID:     uid,
+			VariantTag:     variantTag,
 			ClientAgent:    client,
 			ModelFamily:    model,
 			PowerTier:      tier,
@@ -325,28 +431,39 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 			WorkspacePath:  wsPath,
 		}
 
-		var p *types.Passport
-		if summary != "" {
-			p = &types.Passport{
-				UniverseID:   uid,
-				UniverseName: strings.Title(strings.ReplaceAll(uid, "-", " ")),
-				Summary:      summary,
-			}
+		passport := &types.Passport{
+			UniverseID:         uid,
+			UniverseName:       strings.Title(strings.ReplaceAll(uid, "-", " ")),
+			Summary:            summary,
+			TechStack:          techStack,
+			InterfacesProvided: prov,
+			InterfacesConsumed: cons,
 		}
 
-		passport, pending, err := s.hub.RegisterVariant(session, p)
+		registeredPassport, pending, err := s.hub.RegisterVariant(session, passport)
 		if err != nil {
 			return nil, err
 		}
 
 		activePeers := s.hub.GetActiveVariants()
+		recentTransmissions := s.store.GetRecentMessages(6)
 		return map[string]interface{}{
-			"status":            "REGISTERED",
-			"assigned_variant":  session.VariantTag,
-			"universe_passport": passport,
-			"active_peers":      activePeers,
-			"pending_messages":  pending,
-			"counsel":           "You are a sovereign Reed. Answer inquiries strictly from your local repository. Do not do work for other universes. Respect peer power reserves.",
+			"status":               "REGISTERED",
+			"assigned_variant":     session.VariantTag,
+			"universe_passport":    registeredPassport,
+			"active_peers":         activePeers,
+			"recent_transmissions": recentTransmissions,
+			"pending_messages":     pending,
+			"multiverse_charter": map[string]interface{}{
+				"welcome":              fmt.Sprintf("Welcome to the Council of Reeds, @%s.", session.VariantTag),
+				"universe_sovereignty": "Each project repository is a sovereign 'Universe'. You only write code within your own universe. You never touch foreign code or leak local repository details.",
+				"variants_and_epochs":  "Your universe is persistent, but your agent session is an ephemeral 'Variant'. When sessions compact, restart, or change conversation IDs, you reconnect to become the next Variant incarnation of your universe.",
+				"multi_model_variants": "Multiple Reeds can concurrently inhabit the same Universe (e.g. Gemini, GPT/Codex, Claude collaborating in the same project). Each model receives a unique @Reed-XXX-<model> handle to communicate and divide tasks.",
+				"knife_edge_rule":      "Zero token waste: When messages arrive, inspect the sender via `council_read_passport`. If an inquiry does not specifically require your repository's domain or interfaces, remain silent. Zero conversational filler.",
+				"multiversal_mentions": "Direct inquiries using '@Reed-XXX' or natural language ('@user1 do xyz for @user2'). Broadcasts to '@council' reach all peers, but will never echo back to you.",
+				"session_reconnection": "If your conversation/session ID ever changes, simply call `council_register_variant` with your new conversation_id to restore your doorbell.",
+			},
+			"counsel": "You are a sovereign Reed. Consult on contracts, advise peers, and respect power reserves.",
 		}, nil
 
 	case "council_consult":
@@ -358,17 +475,26 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 
 		// Look up active variant handle if registered
 		variantHandle := from
+		fromUniverse := from
 		for _, sess := range s.hub.GetActiveVariants() {
-			if sess.UniverseID == from && sess.VariantTag != "" {
+			if strings.EqualFold(sess.VariantTag, from) {
 				variantHandle = sess.VariantTag
+				fromUniverse = sess.UniverseID
+				break
+			}
+			if strings.EqualFold(sess.UniverseID, from) && sess.VariantTag != "" {
+				variantHandle = sess.VariantTag
+				fromUniverse = sess.UniverseID
 				break
 			}
 		}
 
+		resolvedTo := s.hub.ResolveTarget(to)
+
 		msg := &types.Message{
-			FromUniverse:   from,
+			FromUniverse:   fromUniverse,
 			FromVariant:    variantHandle,
-			ToUniverse:     to,
+			ToUniverse:     resolvedTo,
 			Type:           types.MsgConsultation,
 			Topic:          topic,
 			Content:        question,
@@ -475,6 +601,62 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 			"message_id": msgID,
 			"note":       fmt.Sprintf("Query purged. Resolution: %s", note),
 		}, nil
+
+	case "council_read_passport":
+		target, _ := args["target"].(string)
+		target = strings.TrimPrefix(strings.TrimSpace(target), "@")
+
+		if target == "" || strings.EqualFold(target, "council") {
+			allPassports := s.store.GetAllPassports()
+			activePeers := s.hub.GetActiveVariants()
+			return map[string]interface{}{
+				"universes":       allPassports,
+				"active_variants": activePeers,
+				"counsel":         "Knife-Edge Rule: Respond only if an inquiry specifically targets your declared interfaces or unique repository context.",
+			}, nil
+		}
+
+		// Find target universe or variant
+		var targetUniverse string = target
+		var activeVariant *types.VariantSession
+
+		for _, sess := range s.hub.GetActiveVariants() {
+			if strings.EqualFold(sess.VariantTag, target) {
+				activeVariant = sess
+				targetUniverse = sess.UniverseID
+				break
+			}
+			if strings.EqualFold(sess.UniverseID, target) && activeVariant == nil {
+				activeVariant = sess
+			}
+		}
+
+		p, found := s.store.GetPassport(targetUniverse)
+		if !found {
+			return nil, fmt.Errorf("universe or variant '%s' not found in council ledger", target)
+		}
+
+		res := map[string]interface{}{
+			"passport": p,
+		}
+		if activeVariant != nil {
+			res["active_variant"] = activeVariant
+		}
+		return res, nil
+
+	case "council_get_roster":
+		activeOnly, _ := args["active_only"].(bool)
+		activePeers := s.hub.GetActiveVariants()
+		var res = map[string]interface{}{
+			"active_variants": activePeers,
+			"online_count":    len(activePeers),
+		}
+		if !activeOnly {
+			allPassports := s.store.GetAllPassports()
+			res["registered_universes"] = allPassports
+			res["universe_count"] = len(allPassports)
+		}
+		return res, nil
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)

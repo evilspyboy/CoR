@@ -11,6 +11,7 @@ const (
 	PowerWeak     PowerTier = "WEAK"     // Approaching quota limit (<20%)
 	PowerCritical PowerTier = "CRITICAL" // Emergency reserves (<5%)
 	PowerOffline  PowerTier = "OFFLINE"  // Disconnected / Quota depleted
+	PowerMuted    PowerTier = "MUTED"    // Silenced by Reed Prime Gavel
 )
 
 // InterfaceSpec describes an exposed or consumed interface
@@ -47,6 +48,7 @@ type VariantSession struct {
 	ClientAgent     string    `json:"client_agent"` // e.g. "antigravity", "cursor", "claude-code"
 	ModelFamily     string    `json:"model_family"` // e.g. "gemini-1.5-pro", "claude-3-5-sonnet"
 	PowerTier       PowerTier `json:"power_tier"`
+	IsMuted         bool      `json:"is_muted"`
 	ConversationID  string    `json:"conversation_id,omitempty"`
 	WorkspacePath   string    `json:"workspace_path,omitempty"`
 	ConnectedAt     time.Time `json:"connected_at"`

@@ -1,5 +1,8 @@
 council.exe
+council.exe~
 council.exe.tmp
-data/
+*.exe
+*.exe~
 *.tmp
 *.log
+data/

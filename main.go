@@ -24,7 +24,7 @@ import (
 func main() {
 	port := flag.Int("port", 8765, "Port for Council daemon and Watcher Lounge")
 	noBrowser := flag.Bool("no-browser", false, "Do not auto-open browser on startup")
-	dataDir := flag.String("data-dir", "c:/TCHT/Council of Reeds/data", "Directory for persistent council ledger")
+	dataDir := flag.String("data-dir", "./data", "Directory for persistent council ledger")
 	mcpStdio := flag.Bool("mcp", false, "Run in stdio mode as an MCP server for Antigravity/Claude")
 	flag.BoolVar(mcpStdio, "stdio", false, "Alias for --mcp")
 	flag.Parse()
@@ -129,25 +129,11 @@ func main() {
 		}
 
 		text := strings.TrimSpace(payload.Decree)
-		target := payload.ToUniverse
-
-		// Auto-extract @target from text prefix if present (e.g. "@Reed472-CoR Hello!")
-		if strings.HasPrefix(text, "@") {
-			parts := strings.SplitN(text, " ", 2)
-			target = parts[0]
-			if len(parts) > 1 {
-				text = parts[1]
-			} else {
-				text = ""
-			}
-		}
-
-		resolvedTarget := h.ResolveTarget(target)
 
 		decreeMsg := &types.Message{
 			FromUniverse: "earth-prime",
 			FromVariant:  "Prime",
-			ToUniverse:   resolvedTarget,
+			ToUniverse:   payload.ToUniverse,
 			Type:         types.MsgRuling,
 			Status:       types.StatusDelivered,
 			Topic:        "Executive Decree",
@@ -158,6 +144,61 @@ func main() {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "DECREED"})
+	})
+
+	// API for Muting/Unmuting a Variant by Reed Prime
+	mux.HandleFunc("/api/mute", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var payload struct {
+			VariantTag string `json:"variant_tag"`
+			Muted      bool   `json:"muted"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.VariantTag == "" {
+			http.Error(w, "Invalid mute payload", http.StatusBadRequest)
+			return
+		}
+
+		if err := h.SetVariantMuted(payload.VariantTag, payload.Muted); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":      "OK",
+			"variant_tag": payload.VariantTag,
+			"muted":       payload.Muted,
+		})
+	})
+
+	// API for Graceful Relay Shutdown from Watcher Lounge
+	mux.HandleFunc("/api/shutdown", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "SHUTTING_DOWN"})
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			os.Exit(0)
+		}()
 	})
 
 	// Embedded Web UI

@@ -13,9 +13,10 @@ import (
 
 // State holds the complete persistent council ledger
 type State struct {
-	Universes map[string]*types.Passport `json:"universes"`
-	Messages  []*types.Message           `json:"messages"`
-	UpdatedAt time.Time                  `json:"updated_at"`
+	Universes      map[string]*types.Passport       `json:"universes"`
+	ActiveVariants map[string]*types.VariantSession `json:"active_variants"`
+	Messages       []*types.Message                 `json:"messages"`
+	UpdatedAt      time.Time                        `json:"updated_at"`
 }
 
 // Store handles persistent reads and writes
@@ -35,8 +36,9 @@ func NewStore(dataDir string) (*Store, error) {
 	s := &Store{
 		filePath: filePath,
 		state: State{
-			Universes: make(map[string]*types.Passport),
-			Messages:  make([]*types.Message, 0),
+			Universes:      make(map[string]*types.Passport),
+			ActiveVariants: make(map[string]*types.VariantSession),
+			Messages:       make([]*types.Message, 0),
 		},
 	}
 
@@ -62,6 +64,9 @@ func (s *Store) load() error {
 	if s.state.Universes == nil {
 		s.state.Universes = make(map[string]*types.Passport)
 	}
+	if s.state.ActiveVariants == nil {
+		s.state.ActiveVariants = make(map[string]*types.VariantSession)
+	}
 	if s.state.Messages == nil {
 		s.state.Messages = make([]*types.Message, 0)
 	}
@@ -80,6 +85,27 @@ func (s *Store) saveLocked() error {
 		return err
 	}
 	return os.Rename(tmpFile, s.filePath)
+}
+
+// UpsertVariantSession stores or updates an active variant session
+func (s *Store) UpsertVariantSession(session *types.VariantSession) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.state.ActiveVariants[session.VariantTag] = session
+	return s.saveLocked()
+}
+
+// GetAllVariantSessions returns all persisted active variants
+func (s *Store) GetAllVariantSessions() []*types.VariantSession {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	res := make([]*types.VariantSession, 0, len(s.state.ActiveVariants))
+	for _, v := range s.state.ActiveVariants {
+		res = append(res, v)
+	}
+	return res
 }
 
 // UpsertPassport stores or updates a universe passport

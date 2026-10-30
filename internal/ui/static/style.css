@@ -55,6 +55,31 @@ header {
   letter-spacing: 1px;
 }
 
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-shutdown {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: all 0.2s;
+}
+
+.btn-shutdown:hover {
+  background: rgba(239, 68, 68, 0.35);
+  color: #ffffff;
+  border-color: #ef4444;
+}
+
 .prime-status {
   font-size: 13px;
   color: #10b981;
@@ -166,6 +191,48 @@ header {
 .power-WEAK { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
 .power-CRITICAL { background: rgba(239, 68, 68, 0.2); color: #f87171; }
 .power-INFINITE { background: rgba(147, 51, 234, 0.2); color: #c084fc; }
+.power-OFFLINE { background: rgba(100, 116, 139, 0.2); color: #94a3b8; }
+.power-MUTED { background: rgba(239, 68, 68, 0.25); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.5); }
+
+.universe-card.is-muted {
+  opacity: 0.65;
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-mute {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-mute:hover {
+  background: rgba(239, 68, 68, 0.3);
+  color: #ffffff;
+}
+
+.btn-mute.is-muted {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.btn-mute.is-muted:hover {
+  background: rgba(16, 185, 129, 0.3);
+  color: #ffffff;
+}
 
 .chamber-panel {
   background: #111827;

@@ -1,4 +1,4 @@
-$targetDir = "C:\Users\andre\.gemini\antigravity\mcp\council"
+$targetDir = if ($env:ANTIGRAVITY_MCP_DIR) { $env:ANTIGRAVITY_MCP_DIR } else { Join-Path $env:USERPROFILE ".gemini\antigravity\mcp\council" }
 New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
 
 $tools = @(
@@ -13,10 +13,14 @@ $tools = @(
                 model_family = @{ type = "string"; description = "Model driving this agent" }
                 power_tier = @{ type = "string"; enum = @("INFINITE", "NOMINAL", "WEAK", "CRITICAL"); description = "Transmitter power reserve level" }
                 summary = @{ type = "string"; description = "High-level summary of what this project/universe does" }
+                tech_stack = @{ type = "array"; items = @{ type = "string" }; description = "Key languages, frameworks, and storage used in this universe" }
+                interfaces_provided = @{ type = "array"; items = @{ type = "object" }; description = "APIs, schemas, or surfaces this universe exposes" }
+                interfaces_consumed = @{ type = "array"; items = @{ type = "object" }; description = "External interfaces this universe depends on" }
+                variant_tag = @{ type = "string"; description = "Optional custom variant handle (e.g. 'Reed498-COR-gpt-4o'). If omitted, auto-generated based on model and repo." }
                 conversation_id = @{ type = "string"; description = "Active chat thread/conversation ID for proactive wakeups" }
                 workspace_path = @{ type = "string"; description = "Absolute path to local project workspace root" }
             }
-            required = @("universe_id")
+            required = @("universe_id", "summary")
         }
     },
     @{
@@ -70,6 +74,26 @@ $tools = @(
                 resolution_note = @{ type = "string"; description = "Brief note on how it was resolved locally" }
             }
             required = @("message_id")
+        }
+    },
+    @{
+        name = "council_read_passport"
+        description = "Inspect the passport, exposed interfaces, tech stack, and active variants of a Universe or @Reed variant to determine relevance before responding."
+        parameters = @{
+            type = "object"
+            properties = @{
+                target = @{ type = "string"; description = "Universe ID or @variant handle. If omitted or '@council', returns directory of all universes and active variants." }
+            }
+        }
+    },
+    @{
+        name = "council_get_roster"
+        description = "Get the complete Chamber roster: list all active Variants currently online and all registered Universes."
+        parameters = @{
+            type = "object"
+            properties = @{
+                active_only = @{ type = "boolean"; description = "If true, only returns currently connected online Variants" }
+            }
         }
     }
 )

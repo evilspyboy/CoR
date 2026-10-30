@@ -96,7 +96,7 @@ func (d *Dispatcher) resolveCodexExe() string {
 	return ""
 }
 
-// notifyAntigravity uses 'agentapi.exe agentapi send-message <conv_id> <content>'
+// notifyAntigravity uses 'agy.exe agentapi send-message' or 'agentapi.bat send-message'
 func (d *Dispatcher) notifyAntigravity(convID, workspacePath, message string) error {
 	exe := d.resolveAgentAPIExe()
 	if exe == "" {
@@ -104,7 +104,13 @@ func (d *Dispatcher) notifyAntigravity(convID, workspacePath, message string) er
 	}
 
 	cleanMsg := strings.ReplaceAll(message, "\n", " ")
-	cmd := exec.Command(exe, "agentapi", "send-message", convID, cleanMsg)
+	baseName := strings.ToLower(filepath.Base(exe))
+	var cmd *exec.Cmd
+	if strings.Contains(baseName, "agy") {
+		cmd = exec.Command(exe, "agentapi", "send-message", convID, cleanMsg)
+	} else {
+		cmd = exec.Command(exe, "send-message", convID, cleanMsg)
+	}
 
 	// Set environment (IPC hook if present in scratch)
 	env := os.Environ()
@@ -143,6 +149,11 @@ func (d *Dispatcher) resolveAgentAPIExe() string {
 		return p
 	}
 
+	if p, err := exec.LookPath("agentapi.bat"); err == nil {
+		d.cachedAgentAPI = p
+		return p
+	}
+
 	if p, err := exec.LookPath("agentapi.exe"); err == nil {
 		d.cachedAgentAPI = p
 		return p
@@ -153,6 +164,7 @@ func (d *Dispatcher) resolveAgentAPIExe() string {
 	if err == nil {
 		candidates := []string{
 			filepath.Join(home, ".gemini", "bin", "agy.exe"),
+			filepath.Join(home, ".gemini", "antigravity", "bin", "agentapi.bat"),
 			filepath.Join(home, ".gemini", "antigravity-ide", "scratch", "antigravity-orchestrator", "bin", "agentapi.exe"),
 			filepath.Join(home, "AppData", "Local", "Programs", "Antigravity", "resources", "app", "bin", "agentapi.exe"),
 		}
