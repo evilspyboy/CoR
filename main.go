@@ -8,10 +8,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"council-of-reeds/internal/hub"
@@ -22,9 +21,12 @@ import (
 )
 
 func main() {
+	exePath, _ := os.Executable()
+	defaultDataDir := filepath.Join(filepath.Dir(exePath), "data")
+
 	port := flag.Int("port", 8765, "Port for Council daemon and Watcher Lounge")
 	noBrowser := flag.Bool("no-browser", false, "Do not auto-open browser on startup")
-	dataDir := flag.String("data-dir", "./data", "Directory for persistent council ledger")
+	dataDir := flag.String("data-dir", defaultDataDir, "Directory for persistent council ledger")
 	mcpStdio := flag.Bool("mcp", false, "Run in stdio mode as an MCP server for Antigravity/Claude")
 	flag.BoolVar(mcpStdio, "stdio", false, "Alias for --mcp")
 	flag.Parse()
@@ -47,6 +49,15 @@ func main() {
 			fmt.Fprintf(os.Stderr, "[ERROR] stdio server exited: %v\n", err)
 		}
 		return
+	}
+
+	// In Windows GUI mode, stdout/stderr have invalid handles; redirect them to council.log
+	if runtime.GOOS == "windows" {
+		logFile, err := os.OpenFile(filepath.Join(*dataDir, "council.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err == nil {
+			os.Stdout = logFile
+			os.Stderr = logFile
+		}
 	}
 
 	fmt.Println("==================================================")
@@ -221,29 +232,23 @@ func main() {
 		Handler: mux,
 	}
 
-	go func() {
-		fmt.Printf("[RELAY ONLINE] Listening at http://%s\n", addr)
-		fmt.Printf("[MCP ENDPOINT] http://%s/mcp\n", addr)
-		fmt.Printf("[WATCHER UI ] http://%s/\n", addr)
+	fmt.Printf("[RELAY ONLINE] Listening at http://%s\n", addr)
+	fmt.Printf("[MCP ENDPOINT] http://%s/mcp\n", addr)
+	fmt.Printf("[WATCHER UI ] http://%s/\n", addr)
 
-		if !*noBrowser {
-			time.Sleep(300 * time.Millisecond)
-			openBrowser(fmt.Sprintf("http://%s/", addr))
-		}
+	if !*noBrowser {
+		time.Sleep(300 * time.Millisecond)
+		openBrowser(fmt.Sprintf("http://%s/", addr))
+	}
 
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("[FATAL] HTTP server error: %v\n", err)
-			os.Exit(1)
+	defer func() {
+		if r := recover(); r != nil {
+			_ = os.WriteFile("relay_crash.log", []byte(fmt.Sprintf("panic: %v", r)), 0644)
 		}
 	}()
 
-	// Graceful shutdown on Interrupt / SIGTERM
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	<-sigChan
-
-	fmt.Println("\n[RELAY SHUTTING DOWN] Persisting ledger and closing frequencies...")
-	_ = server.Close()
+	err = server.ListenAndServe()
+	_ = os.WriteFile("relay_crash.log", []byte(fmt.Sprintf("listen returned: %v", err)), 0644)
 	fmt.Println("[COUNCIL DISMISSED] Goodbye, Prime.")
 }
 

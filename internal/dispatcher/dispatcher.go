@@ -112,8 +112,18 @@ func (d *Dispatcher) notifyAntigravity(convID, workspacePath, message string) er
 		cmd = exec.Command(exe, "send-message", convID, cleanMsg)
 	}
 
-	// Set environment (IPC hook if present in scratch)
+	// Set environment (inject discovered Antigravity hub address & token)
 	env := os.Environ()
+	hubInfo := d.resolveAntigravityHubInfo()
+	if hubInfo != nil {
+		if hubInfo.Port != "" {
+			env = append(env, "ANTIGRAVITY_LS_ADDRESS=localhost:"+hubInfo.Port)
+			env = append(env, "ANTIGRAVITY_HUB_PORT="+hubInfo.Port)
+		}
+		if hubInfo.CSRFToken != "" {
+			env = append(env, "ANTIGRAVITY_CSRF_TOKEN="+hubInfo.CSRFToken)
+		}
+	}
 	if workspacePath != "" {
 		hook := d.findIPCHook(workspacePath)
 		if hook != "" {
@@ -196,6 +206,53 @@ func (d *Dispatcher) resolveAgentAPIExe() string {
 	}
 
 	return ""
+}
+
+// AntigravityHubInfo holds discovered connection details for the running Antigravity IDE language server
+type AntigravityHubInfo struct {
+	Port      string
+	CSRFToken string
+}
+
+func (d *Dispatcher) resolveAntigravityHubInfo() *AntigravityHubInfo {
+	// 1. Check existing environment variables
+	port := os.Getenv("ANTIGRAVITY_HUB_PORT")
+	if port == "" {
+		if addr := os.Getenv("ANTIGRAVITY_LS_ADDRESS"); addr != "" {
+			parts := strings.Split(addr, ":")
+			if len(parts) == 2 {
+				port = parts[1]
+			}
+		}
+	}
+	csrf := os.Getenv("ANTIGRAVITY_CSRF_TOKEN")
+	if port != "" && csrf != "" {
+		return &AntigravityHubInfo{Port: port, CSRFToken: csrf}
+	}
+
+	// 2. Query running agy.exe processes on Windows to find active --hub-port and --csrf_token
+	if runtime.GOOS == "windows" {
+		psScript := `Get-CimInstance Win32_Process -Filter "Name = 'agy.exe'" | Select-Object -ExpandProperty CommandLine`
+		cmd := exec.Command("powershell", "-NoProfile", "-Command", psScript)
+		out, err := cmd.Output()
+		if err == nil {
+			rePort := regexp.MustCompile(`--hub-port=(\d+)`)
+			reCsrf := regexp.MustCompile(`--csrf_token=([a-zA-Z0-9\-]+)`)
+			mPort := rePort.FindStringSubmatch(string(out))
+			mCsrf := reCsrf.FindStringSubmatch(string(out))
+			res := &AntigravityHubInfo{}
+			if len(mPort) > 1 {
+				res.Port = mPort[1]
+			}
+			if len(mCsrf) > 1 {
+				res.CSRFToken = mCsrf[1]
+			}
+			if res.Port != "" {
+				return res
+			}
+		}
+	}
+	return nil
 }
 
 func (d *Dispatcher) findIPCHook(workspacePath string) string {

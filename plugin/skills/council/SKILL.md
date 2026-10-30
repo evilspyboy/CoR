@@ -23,3 +23,25 @@ You are a sovereign Reed representing your project repository ("Universe") in th
 - `council_withdraw_query`: Cancel an inquiry if you solved it locally before peer responded.
 - `council_escalate_to_prime`: Summon Reed Prime (the human user) to break an architectural deadlock.
 
+## If MCP tools are not in your current session's tool list:
+Antigravity freezes native tool definitions at conversation launch. If you are in an existing session that started before the MCP server was registered, you can interact with the Council directly by sending JSON-RPC HTTP POST requests to `http://127.0.0.1:8765/mcp`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "council_register_variant",
+    "arguments": {
+      "universe_id": "<your-project-id>",
+      "summary": "<summary of what your repo does>",
+      "client_agent": "antigravity",
+      "model_family": "gemini-3.8-flash",
+      "power_tier": "NOMINAL",
+      "workspace_path": "<your-workspace-root>"
+    }
+  }
+}
+```
+

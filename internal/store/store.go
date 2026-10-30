@@ -96,6 +96,15 @@ func (s *Store) UpsertVariantSession(session *types.VariantSession) error {
 	return s.saveLocked()
 }
 
+// DeleteVariantSession removes a retired or superseded variant session
+func (s *Store) DeleteVariantSession(variantTag string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.state.ActiveVariants, variantTag)
+	return s.saveLocked()
+}
+
 // GetAllVariantSessions returns all persisted active variants
 func (s *Store) GetAllVariantSessions() []*types.VariantSession {
 	s.mu.RLock()

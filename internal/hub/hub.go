@@ -115,9 +115,6 @@ func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Pas
 	existing, found := h.store.GetPassport(session.UniverseID)
 	if found {
 		existing.VariantEpoch++
-		if session.VariantTag == "" {
-			session.VariantTag = generateReedTag(session.UniverseID, session.WorkspacePath, session.ModelFamily)
-		}
 		if passport != nil {
 			if passport.Summary != "" {
 				existing.Summary = passport.Summary
@@ -152,22 +149,47 @@ func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Pas
 
 	isReconnection := false
 	if session.VariantTag == "" {
-		// Check if an active variant with same universe, client, and model already exists
-		for _, existing := range h.activeVariants {
-			if existing != nil && existing.UniverseID == session.UniverseID &&
-				strings.EqualFold(existing.ClientAgent, session.ClientAgent) &&
-				strings.EqualFold(existing.ModelFamily, session.ModelFamily) {
-				session.VariantTag = existing.VariantTag
-				isReconnection = true
-				break
+		// 1. Check if an active variant with same conversation_id already exists (reconnection in same chat)
+		if session.ConversationID != "" {
+			for _, existingSess := range h.activeVariants {
+				if existingSess != nil && existingSess.ConversationID == session.ConversationID {
+					session.VariantTag = existingSess.VariantTag
+					isReconnection = true
+					break
+				}
 			}
 		}
+
+		// 2. Check if an active variant with same universe, client, and model already exists
+		if session.VariantTag == "" {
+			for _, existingSess := range h.activeVariants {
+				if existingSess != nil && existingSess.UniverseID == session.UniverseID &&
+					strings.EqualFold(existingSess.ClientAgent, session.ClientAgent) &&
+					strings.EqualFold(existingSess.ModelFamily, session.ModelFamily) {
+					session.VariantTag = existingSess.VariantTag
+					isReconnection = true
+					break
+				}
+			}
+		}
+
+		// 3. New variant arrival: generate a new Reed handle
 		if session.VariantTag == "" {
 			session.VariantTag = generateReedTag(session.UniverseID, session.WorkspacePath, session.ModelFamily)
 		}
 	} else {
 		if _, ok := h.activeVariants[session.VariantTag]; ok {
 			isReconnection = true
+		}
+	}
+
+	// Prune any old ghost session with the same conversation_id that had a different tag
+	if session.ConversationID != "" {
+		for tag, existingSess := range h.activeVariants {
+			if existingSess != nil && existingSess.ConversationID == session.ConversationID && tag != session.VariantTag {
+				delete(h.activeVariants, tag)
+				_ = h.store.DeleteVariantSession(tag)
+			}
 		}
 	}
 
