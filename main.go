@@ -39,9 +39,10 @@ func main() {
 	h := hub.NewHub(s)
 	mcpServer := mcp.NewServer(h, s)
 
-	// If invoked with --mcp / --stdio, run standard I/O loop directly
+	// If invoked with --mcp / --stdio, run smart stdio bridge
 	if *mcpStdio {
-		if err := mcpServer.RunStdioServer(); err != nil && err != io.EOF {
+		daemonURL := fmt.Sprintf("http://127.0.0.1:%d", *port)
+		if err := mcpServer.RunSmartStdio(daemonURL); err != nil && err != io.EOF {
 			fmt.Fprintf(os.Stderr, "[ERROR] stdio server exited: %v\n", err)
 		}
 		return
