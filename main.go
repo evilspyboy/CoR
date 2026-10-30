@@ -104,9 +104,11 @@ func main() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		universes := s.GetAllPassports()
 		active := h.GetActiveVariants()
+		messages := s.GetRecentMessages(50)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"universes":       universes,
 			"active_variants": active,
+			"messages":        messages,
 		})
 	})
 

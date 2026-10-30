@@ -40,13 +40,51 @@ function connectEvents() {
   };
 }
 
-// Fetch active universes from the daemon
+const seenMessageIds = new Set();
+
+function addFeedItem(msg) {
+  if (msg.id && seenMessageIds.has(msg.id)) {
+    return;
+  }
+  if (msg.id) {
+    seenMessageIds.add(msg.id);
+  }
+
+  const item = document.createElement("div");
+  const typeClass = msg.type || "notice";
+  item.className = `feed-item ${typeClass}`;
+
+  const timeStr = msg.created_at ? new Date(msg.created_at).toLocaleTimeString() : new Date().toLocaleTimeString();
+  let source = msg.from_variant || msg.from_universe || "SYSTEM";
+  if (source.includes("Prime")) {
+    source = "Prime";
+  }
+  const to = msg.to_universe ? ` ➔ ${msg.to_universe}` : "";
+
+  item.innerHTML = `
+    <div class="meta">
+      <span class="time">${timeStr}</span>
+      <span class="source">[${escapeHtml(source)}${escapeHtml(to)}]</span>
+      ${msg.topic ? `<span class="topic">#${escapeHtml(msg.topic)}</span>` : ""}
+    </div>
+    <div class="content">${escapeHtml(msg.content)}</div>
+    ${msg.context_snippet ? `<pre class="snippet" style="background:#0b0f19;padding:6px;margin-top:4px;border-radius:4px;font-size:11px;overflow-x:auto;">${escapeHtml(msg.context_snippet)}</pre>` : ""}
+  `;
+
+  feedContainer.appendChild(item);
+  feedContainer.scrollTop = feedContainer.scrollHeight;
+}
+
+// Fetch active universes and chat history from the daemon
 async function fetchInitialState() {
   try {
     const res = await fetch("/api/state");
     const data = await res.json();
     console.log("[Council Lounge] Loaded state:", data);
     renderRoster(data.universes || [], data.active_variants || []);
+    if (data.messages && Array.isArray(data.messages)) {
+      data.messages.forEach(m => addFeedItem(m));
+    }
   } catch (err) {
     console.error("[Council Lounge] Failed to fetch state", err);
   }
