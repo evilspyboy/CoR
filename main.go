@@ -159,7 +159,18 @@ func main() {
 	})
 
 	// Embedded Web UI
-	mux.Handle("/", http.FileServer(ui.GetFileSystem()))
+	fileServer := http.FileServer(ui.GetFileSystem())
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		} else if strings.HasSuffix(r.URL.Path, ".js") {
+			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		} else if strings.HasSuffix(r.URL.Path, ".css") {
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 
 	addr := fmt.Sprintf("127.0.0.1:%d", *port)
 	server := &http.Server{

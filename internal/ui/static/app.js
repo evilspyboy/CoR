@@ -45,11 +45,15 @@ async function fetchInitialState() {
   try {
     const res = await fetch("/api/state");
     const data = await res.json();
+    console.log("[Council Lounge] Loaded state:", data);
     renderRoster(data.universes || [], data.active_variants || []);
   } catch (err) {
-    console.error("Failed to fetch state", err);
+    console.error("[Council Lounge] Failed to fetch state", err);
   }
 }
+
+// Call immediately on script load as well as on SSE connect
+fetchInitialState();
 
 const autocompleteList = document.getElementById("autocomplete-list");
 
@@ -112,12 +116,13 @@ function insertMention(handle) {
 // Discord-style @ autocomplete
 gavelInput.addEventListener("input", () => {
   const text = gavelInput.value;
-  const atMatch = text.match(/@(\w*)$/);
+  const atMatch = text.match(/@([\w-]*)$/);
 
   if (atMatch) {
     const query = atMatch[1].toLowerCase();
     const matches = currentActiveVariants.filter(v => 
-      v.variant_tag.toLowerCase().includes(query) || v.universe_id.toLowerCase().includes(query)
+      (v.variant_tag && v.variant_tag.toLowerCase().includes(query)) || 
+      (v.universe_id && v.universe_id.toLowerCase().includes(query))
     );
 
     if (matches.length > 0) {
