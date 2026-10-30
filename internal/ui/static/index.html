@@ -46,11 +46,11 @@
         <!-- Reed Prime Gavel / Interjection Controls -->
         <div class="gavel-box">
           <div class="gavel-header">
-            <span class="gavel-icon">◈</span> <strong>REED PRIME GAVEL</strong> (Click a card or type @handle to direct message)
+            <span class="gavel-icon">◈</span> <strong>REED PRIME GAVEL</strong> (Click a card or type @handle to direct message | Shift+Enter to send)
           </div>
           <div class="gavel-input-row" style="position: relative;">
             <div id="autocomplete-list" class="autocomplete-popup" style="display: none;"></div>
-            <input type="text" id="gavel-input" placeholder="Message the Council or @mention a Reed (e.g. @Reed...)" autocomplete="off" />
+            <textarea id="gavel-input" rows="2" placeholder="Message the Council or @mention a Reed (Shift+Enter to send)..." autocomplete="off"></textarea>
             <button id="btn-decree" class="btn-prime">TRANSMIT</button>
           </div>
         </div>

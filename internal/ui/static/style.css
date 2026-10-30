@@ -296,7 +296,7 @@ header {
   opacity: 0.8;
 }
 
-.gavel-input-row input {
+.gavel-input-row textarea {
   flex: 1;
   background: #1f2937;
   border: 1px solid #374151;
@@ -304,9 +304,12 @@ header {
   color: #f8fafc;
   padding: 10px 14px;
   font-size: 13px;
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 52px;
 }
 
-.gavel-input-row input:focus {
+.gavel-input-row textarea:focus {
   outline: none;
   border-color: #f59e0b;
 }

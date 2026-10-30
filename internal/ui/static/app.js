@@ -113,6 +113,9 @@ function insertMention(handle) {
   closeAutocomplete();
 }
 
+let autocompleteMatches = [];
+let selectedAutocompleteIdx = 0;
+
 // Discord-style @ autocomplete
 gavelInput.addEventListener("input", () => {
   const text = gavelInput.value;
@@ -120,27 +123,14 @@ gavelInput.addEventListener("input", () => {
 
   if (atMatch) {
     const query = atMatch[1].toLowerCase();
-    const matches = currentActiveVariants.filter(v => 
+    autocompleteMatches = currentActiveVariants.filter(v => 
       (v.variant_tag && v.variant_tag.toLowerCase().includes(query)) || 
       (v.universe_id && v.universe_id.toLowerCase().includes(query))
     );
 
-    if (matches.length > 0) {
-      autocompleteList.innerHTML = "";
-      matches.forEach(m => {
-        const item = document.createElement("div");
-        item.className = "autocomplete-item";
-        item.innerHTML = `
-          <span class="handle">@${escapeHtml(m.variant_tag)}</span>
-          <span class="desc">${escapeHtml(m.universe_id)} (${m.power_tier})</span>
-        `;
-        item.onclick = () => {
-          gavelInput.value = text.replace(/@\w*$/, `@${m.variant_tag} `);
-          closeAutocomplete();
-          gavelInput.focus();
-        };
-        autocompleteList.appendChild(item);
-      });
+    if (autocompleteMatches.length > 0) {
+      selectedAutocompleteIdx = 0;
+      renderAutocompleteItems();
       autocompleteList.style.display = "block";
       return;
     }
@@ -148,12 +138,81 @@ gavelInput.addEventListener("input", () => {
   closeAutocomplete();
 });
 
+function renderAutocompleteItems() {
+  autocompleteList.innerHTML = "";
+  autocompleteMatches.forEach((m, idx) => {
+    const item = document.createElement("div");
+    item.className = `autocomplete-item ${idx === selectedAutocompleteIdx ? "selected" : ""}`;
+    item.innerHTML = `
+      <span class="handle">@${escapeHtml(m.variant_tag)}</span>
+      <span class="desc">${escapeHtml(m.universe_id)} (${m.power_tier})</span>
+    `;
+    item.onclick = () => {
+      applyAutocomplete(m.variant_tag);
+    };
+    autocompleteList.appendChild(item);
+  });
+}
+
+function applyAutocomplete(handle) {
+  const text = gavelInput.value;
+  gavelInput.value = text.replace(/@([\w-]*)$/, `@${handle} `);
+  closeAutocomplete();
+  gavelInput.focus();
+}
+
 function closeAutocomplete() {
+  autocompleteMatches = [];
+  selectedAutocompleteIdx = 0;
   if (autocompleteList) autocompleteList.style.display = "none";
 }
 
+// Keyboard handling: Tab/Enter to autocomplete, Shift+Enter to send
+gavelInput.addEventListener("keydown", (e) => {
+  const isAutocompleteOpen = autocompleteList && autocompleteList.style.display === "block";
+
+  if (isAutocompleteOpen) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      selectedAutocompleteIdx = (selectedAutocompleteIdx + 1) % autocompleteMatches.length;
+      renderAutocompleteItems();
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      selectedAutocompleteIdx = (selectedAutocompleteIdx - 1 + autocompleteMatches.length) % autocompleteMatches.length;
+      renderAutocompleteItems();
+      return;
+    }
+    if (e.key === "Tab" || e.key === "Enter") {
+      e.preventDefault();
+      if (autocompleteMatches[selectedAutocompleteIdx]) {
+        applyAutocomplete(autocompleteMatches[selectedAutocompleteIdx].variant_tag);
+      }
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeAutocomplete();
+      return;
+    }
+  }
+
+  // Shift + Enter or Ctrl + Enter sends the message
+  if (e.key === "Enter" && (e.shiftKey || e.ctrlKey)) {
+    e.preventDefault();
+    issueDecree();
+  }
+});
+
+// Click outside closes autocomplete
 document.addEventListener("click", (e) => {
   if (!e.target.closest(".gavel-box")) closeAutocomplete();
+});
+
+// Transmit button click handler
+btnDecree.addEventListener("click", () => {
+  issueDecree();
 });
 
 async function issueDecree() {
@@ -169,6 +228,7 @@ async function issueDecree() {
     if (res.ok) {
       gavelInput.value = "";
       closeAutocomplete();
+      fetchInitialState(); // Refresh feed immediately
     }
   } catch (err) {
     alert("Failed to issue decree: " + err);
