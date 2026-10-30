@@ -56,15 +56,29 @@ function addFeedItem(msg) {
 
   const timeStr = msg.created_at ? new Date(msg.created_at).toLocaleTimeString() : new Date().toLocaleTimeString();
   let source = msg.from_variant || msg.from_universe || "SYSTEM";
-  if (source.includes("Prime")) {
+  if (source.toLowerCase().includes("prime")) {
     source = "Prime";
+  } else if (!source.startsWith("@")) {
+    source = `@${source}`;
   }
-  const to = msg.to_universe ? ` ➔ ${msg.to_universe}` : "";
+
+  let to = msg.to_universe || "";
+  if (to && to !== "@council" && to !== "council") {
+    const targetVariant = currentActiveVariants.find(v => 
+      v.universe_id === to || v.variant_tag === to
+    );
+    if (targetVariant && targetVariant.variant_tag) {
+      to = `@${targetVariant.variant_tag}`;
+    } else if (!to.startsWith("@")) {
+      to = `@${to}`;
+    }
+  }
+  const toStr = to ? ` ➔ ${to}` : "";
 
   item.innerHTML = `
     <div class="meta">
       <span class="time">${timeStr}</span>
-      <span class="source">[${escapeHtml(source)}${escapeHtml(to)}]</span>
+      <span class="source">[${escapeHtml(source)}${escapeHtml(toStr)}]</span>
       ${msg.topic ? `<span class="topic">#${escapeHtml(msg.topic)}</span>` : ""}
     </div>
     <div class="content">${escapeHtml(msg.content)}</div>

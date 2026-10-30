@@ -356,9 +356,18 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 		question, _ := args["question"].(string)
 		snippet, _ := args["context_snippet"].(string)
 
+		// Look up active variant handle if registered
+		variantHandle := from
+		for _, sess := range s.hub.GetActiveVariants() {
+			if sess.UniverseID == from && sess.VariantTag != "" {
+				variantHandle = sess.VariantTag
+				break
+			}
+		}
+
 		msg := &types.Message{
 			FromUniverse:   from,
-			FromVariant:    from,
+			FromVariant:    variantHandle,
 			ToUniverse:     to,
 			Type:           types.MsgConsultation,
 			Topic:          topic,
