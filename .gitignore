@@ -1,0 +1,5 @@
+council.exe
+council.exe.tmp
+data/
+*.tmp
+*.log

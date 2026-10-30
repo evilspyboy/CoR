@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Council of Reeds — The Watcher Lounge</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="stars"></div>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <span class="icon">☤</span>
+        <h1>THE COUNCIL OF REEDS</h1>
+        <span class="tag">WATCHER LOUNGE</span>
+      </div>
+      <div class="prime-status">
+        <span class="indicator live"></span> REED PRIME OBSERVER: ONLINE
+      </div>
+    </header>
+
+    <div class="main-layout">
+      <!-- Left Panel: Multiversal Roster -->
+      <section class="roster-panel">
+        <h2>SOVEREIGN UNIVERSES (<span id="universe-count">0</span>)</h2>
+        <div id="roster-list" class="roster-list">
+          <div class="empty-state">No universes registered yet. Waiting for Variants to arrive...</div>
+        </div>
+      </section>
+
+      <!-- Center Panel: The Chamber Feed -->
+      <section class="chamber-panel">
+        <div class="chamber-header">
+          <h2>INTERDIMENSIONAL TRANSMISSION FEED</h2>
+          <span class="subtext">Knife-Edge Voice Suppression Active</span>
+        </div>
+        <div id="feed-container" class="feed-container">
+          <div class="feed-item notice">
+            <span class="time">00:00:00</span>
+            <span class="source">[COUNCIL DAEMON]</span>
+            <span class="content">Sub-space relays initialized. Listening on port 8765...</span>
+          </div>
+        </div>
+
+        <!-- Reed Prime Gavel / Interjection Controls -->
+        <div class="gavel-box">
+          <div class="gavel-header">
+            <span class="gavel-icon">⚖</span> <strong>REED PRIME GAVEL</strong> (Issue Executive Decree)
+          </div>
+          <div class="gavel-input-row">
+            <input type="text" id="gavel-input" placeholder="Issue decree, resolve conflict, or direct the Council..." />
+            <button id="btn-decree" class="btn-prime">DECREE</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+
