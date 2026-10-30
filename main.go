@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,24 +23,34 @@ import (
 func main() {
 	port := flag.Int("port", 8765, "Port for Council daemon and Watcher Lounge")
 	noBrowser := flag.Bool("no-browser", false, "Do not auto-open browser on startup")
-	dataDir := flag.String("data-dir", "./data", "Directory for persistent council ledger")
+	dataDir := flag.String("data-dir", "c:/TCHT/Council of Reeds/data", "Directory for persistent council ledger")
+	mcpStdio := flag.Bool("mcp", false, "Run in stdio mode as an MCP server for Antigravity/Claude")
+	flag.BoolVar(mcpStdio, "stdio", false, "Alias for --mcp")
 	flag.Parse()
-
-	fmt.Println("==================================================")
-	fmt.Println("             THE COUNCIL OF REEDS                 ")
-	fmt.Println("         Interdimensional Chamber Relay           ")
-	fmt.Println("==================================================")
 
 	// 1. Initialize persistent store
 	s, err := store.NewStore(*dataDir)
 	if err != nil {
-		fmt.Printf("[FATAL] Failed to initialize store: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[FATAL] Failed to initialize store: %v\n", err)
 		os.Exit(1)
 	}
 
 	// 2. Initialize Hub & MCP server
 	h := hub.NewHub(s)
 	mcpServer := mcp.NewServer(h, s)
+
+	// If invoked with --mcp / --stdio, run standard I/O loop directly
+	if *mcpStdio {
+		if err := mcpServer.RunStdioServer(); err != nil && err != io.EOF {
+			fmt.Fprintf(os.Stderr, "[ERROR] stdio server exited: %v\n", err)
+		}
+		return
+	}
+
+	fmt.Println("==================================================")
+	fmt.Println("             THE COUNCIL OF REEDS                 ")
+	fmt.Println("         Interdimensional Chamber Relay           ")
+	fmt.Println("==================================================")
 
 	// 3. Setup HTTP router
 	mux := http.NewServeMux()
