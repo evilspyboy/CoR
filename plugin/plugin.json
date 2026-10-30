@@ -1,0 +1,17 @@
+{
+  "name": "council-of-reeds",
+  "displayName": "The Council of Reeds",
+  "version": "1.0.0",
+  "description": "Interdimensional federated consultation network for sovereign development agents across independent repositories.",
+  "author": {
+    "name": "Reed Prime"
+  },
+  "license": "MIT",
+  "keywords": [
+    "council",
+    "multi-agent",
+    "coordination",
+    "federation",
+    "mcp"
+  ]
+}

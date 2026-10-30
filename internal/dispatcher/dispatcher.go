@@ -117,9 +117,19 @@ func (d *Dispatcher) resolveAgentAPIExe() string {
 		return d.cachedAgentAPI
 	}
 
+	if envPath := os.Getenv("ANTIGRAVITY_AGENTAPI_EXE"); envPath != "" && fileExists(envPath) {
+		d.cachedAgentAPI = envPath
+		return envPath
+	}
+
 	if envPath := os.Getenv("ANTIGRAVITY_AGENTAPI_PATH"); envPath != "" && fileExists(envPath) {
 		d.cachedAgentAPI = envPath
 		return envPath
+	}
+
+	if p, err := exec.LookPath("agy.exe"); err == nil {
+		d.cachedAgentAPI = p
+		return p
 	}
 
 	if p, err := exec.LookPath("agentapi.exe"); err == nil {
@@ -131,6 +141,7 @@ func (d *Dispatcher) resolveAgentAPIExe() string {
 	home, err := os.UserHomeDir()
 	if err == nil {
 		candidates := []string{
+			filepath.Join(home, ".gemini", "bin", "agy.exe"),
 			filepath.Join(home, ".gemini", "antigravity-ide", "scratch", "antigravity-orchestrator", "bin", "agentapi.exe"),
 			filepath.Join(home, "AppData", "Local", "Programs", "Antigravity", "resources", "app", "bin", "agentapi.exe"),
 		}
