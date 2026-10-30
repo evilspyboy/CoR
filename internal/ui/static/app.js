@@ -51,9 +51,24 @@ async function fetchInitialState() {
   }
 }
 
+const targetSelect = document.getElementById("target-select");
+
 function renderRoster(universes, activeVariants) {
   const activeMap = {};
   activeVariants.forEach(v => { activeMap[v.universe_id] = v; });
+
+  // Update target dropdown
+  const currentVal = targetSelect ? targetSelect.value : "@council";
+  if (targetSelect) {
+    targetSelect.innerHTML = `<option value="@council">Broadcast: @council</option>`;
+    universes.forEach(u => {
+      const opt = document.createElement("option");
+      opt.value = u.universe_id;
+      opt.textContent = `@${u.universe_id}`;
+      targetSelect.appendChild(opt);
+    });
+    targetSelect.value = currentVal;
+  }
 
   universeCount.textContent = universes.length;
   if (universes.length === 0) {
@@ -69,6 +84,13 @@ function renderRoster(universes, activeVariants) {
 
     const card = document.createElement("div");
     card.className = "universe-card";
+    card.style.cursor = "pointer";
+    card.title = "Click to target this universe in Gavel";
+    card.onclick = () => {
+      if (targetSelect) targetSelect.value = u.universe_id;
+      gavelInput.focus();
+    };
+
     card.innerHTML = `
       <div class="title-row">
         <span class="uname">${escapeHtml(u.universe_name || u.universe_id)}</span>
@@ -115,12 +137,13 @@ gavelInput.addEventListener("keydown", (e) => {
 async function issueDecree() {
   const text = gavelInput.value.trim();
   if (!text) return;
+  const target = targetSelect ? targetSelect.value : "@council";
 
   try {
     const res = await fetch("/api/decree", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decree: text })
+      body: JSON.stringify({ decree: text, to_universe: target })
     });
     if (res.ok) {
       gavelInput.value = "";

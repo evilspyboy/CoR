@@ -46,11 +46,14 @@
         <!-- Reed Prime Gavel / Interjection Controls -->
         <div class="gavel-box">
           <div class="gavel-header">
-            <span class="gavel-icon">⚖</span> <strong>REED PRIME GAVEL</strong> (Issue Executive Decree)
+            <span class="gavel-icon">⚖</span> <strong>REED PRIME GAVEL</strong> (Issue Executive Decree or Direct Message)
           </div>
           <div class="gavel-input-row">
-            <input type="text" id="gavel-input" placeholder="Issue decree, resolve conflict, or direct the Council..." />
-            <button id="btn-decree" class="btn-prime">DECREE</button>
+            <select id="target-select" class="target-dropdown">
+              <option value="@council">Broadcast: @council</option>
+            </select>
+            <input type="text" id="gavel-input" placeholder="Type decree or message (or use @universe)..." />
+            <button id="btn-decree" class="btn-prime">TRANSMIT</button>
           </div>
         </div>
       </section>

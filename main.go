@@ -105,17 +105,23 @@ func main() {
 		}
 
 		var payload struct {
-			Decree string `json:"decree"`
+			Decree     string `json:"decree"`
+			ToUniverse string `json:"to_universe"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Decree == "" {
 			http.Error(w, "Invalid decree", http.StatusBadRequest)
 			return
 		}
 
+		target := payload.ToUniverse
+		if target == "" {
+			target = "@council"
+		}
+
 		decreeMsg := &types.Message{
 			FromUniverse: "earth-prime",
 			FromVariant:  "Reed Prime (The Watcher)",
-			ToUniverse:   "@council",
+			ToUniverse:   target,
 			Type:         types.MsgRuling,
 			Status:       types.StatusDelivered,
 			Topic:        "Executive Decree",
