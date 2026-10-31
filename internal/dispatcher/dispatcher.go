@@ -125,6 +125,7 @@ func (d *Dispatcher) notifyAntigravity(convID, workspacePath, message string) er
 		}
 	}
 	if workspacePath != "" {
+		cmd.Dir = workspacePath
 		hook := d.findIPCHook(workspacePath)
 		if hook != "" {
 			env = append(env, "VSCODE_IPC_HOOK="+hook)

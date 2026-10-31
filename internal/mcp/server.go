@@ -185,13 +185,17 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "council_listen",
-			Description: "Listen for incoming consultations, responses, stakeholder alerts, or Reed Prime rulings.",
+			Description: "Listen for incoming consultations, responses, stakeholder alerts, or direct messages. Polls both universe broadcasts and direct @variant queues.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"universe_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Your universe ID to poll messages for",
+						"description": "Your universe ID (e.g. 'opentwin') or @variant handle (e.g. '@Reed908-Open-Argon')",
+					},
+					"variant_tag": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional specific variant handle (e.g. 'Reed908-Open-Argon'). If provided, checks both direct messages to this variant and universe broadcasts.",
 					},
 					"timeout_seconds": map[string]interface{}{
 						"type":        "integer",
@@ -574,10 +578,50 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 		return res, nil
 
 	case "council_listen":
-		uid, _ := args["universe_id"].(string)
-		if uid == "" {
-			return nil, fmt.Errorf("universe_id is required")
+		rawTarget, _ := args["universe_id"].(string)
+		rawVariant, _ := args["variant_tag"].(string)
+		if rawTarget == "" && rawVariant == "" {
+			return nil, fmt.Errorf("universe_id or variant_tag is required")
 		}
+
+		targetClean := strings.TrimPrefix(strings.TrimSpace(rawTarget), "@")
+		variantClean := strings.TrimPrefix(strings.TrimSpace(rawVariant), "@")
+
+		// If targetClean matches a variant tag, resolve its universe
+		if variantClean == "" {
+			for _, sess := range s.hub.GetActiveVariants() {
+				if strings.EqualFold(sess.VariantTag, targetClean) {
+					variantClean = sess.VariantTag
+					targetClean = sess.UniverseID
+					break
+				}
+			}
+		}
+
+		// Find relevant channels: universe broadcast channel + variant channel(s)
+		channelsToListen := make([]<-chan *types.Message, 0)
+		chUniv, err := s.hub.ListenChannel(targetClean)
+		if err == nil {
+			channelsToListen = append(channelsToListen, chUniv)
+		}
+
+		if variantClean != "" {
+			chVar, err := s.hub.ListenChannel(variantClean)
+			if err == nil {
+				channelsToListen = append(channelsToListen, chVar)
+			}
+		} else {
+			// If variant_tag not explicitly given, also monitor all active variants for this universe
+			for _, sess := range s.hub.GetActiveVariants() {
+				if strings.EqualFold(sess.UniverseID, targetClean) {
+					chVar, err := s.hub.ListenChannel(sess.VariantTag)
+					if err == nil {
+						channelsToListen = append(channelsToListen, chVar)
+					}
+				}
+			}
+		}
+
 		timeoutSec, _ := args["timeout_seconds"].(float64)
 		if timeoutSec < 0 {
 			timeoutSec = 0
@@ -586,35 +630,46 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 			timeoutSec = 30
 		}
 
-		ch, err := s.hub.ListenChannel(uid)
-		if err != nil {
-			return nil, err
-		}
-
 		var received []*types.Message
 		timeoutChan := time.After(time.Duration(timeoutSec) * time.Second)
 
-		// Drain existing queue or wait
-	drainLoop:
-		for {
-			select {
-			case m := <-ch:
-				received = append(received, m)
-			default:
-				if len(received) > 0 || timeoutSec == 0 {
-					break drainLoop
+		// Drain existing queues across all monitored channels
+		drainChannels := func() bool {
+			gotAny := false
+			for _, ch := range channelsToListen {
+				for {
+					select {
+					case m := <-ch:
+						received = append(received, m)
+						gotAny = true
+					default:
+						goto nextCh
+					}
 				}
+			nextCh:
+			}
+			return gotAny
+		}
+
+		drainChannels()
+		if len(received) == 0 && timeoutSec > 0 {
+		waitLoop:
+			for {
 				select {
-				case m := <-ch:
-					received = append(received, m)
 				case <-timeoutChan:
-					break drainLoop
+					break waitLoop
+				default:
+					if drainChannels() {
+						break waitLoop
+					}
+					time.Sleep(50 * time.Millisecond)
 				}
 			}
 		}
 
 		return map[string]interface{}{
-			"universe_id": uid,
+			"universe_id": targetClean,
+			"variant_tag": variantClean,
 			"messages":    received,
 			"count":       len(received),
 		}, nil

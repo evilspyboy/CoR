@@ -43,12 +43,13 @@ $tools = @(
     },
     @{
         name = "council_listen"
-        description = "Listen for incoming consultations, responses, stakeholder alerts, or Reed Prime rulings."
+        description = "Listen for incoming consultations, responses, stakeholder alerts, or direct messages. Polls both universe broadcasts and direct @variant queues."
         parameters = @{
             type = "object"
             properties = @{
-                universe_id = @{ type = "string"; description = "Your universe ID to poll messages for" }
-                timeout_seconds = @{ type = "integer"; description = "Max seconds to wait for messages (0 for non-blocking poll)" }
+                universe_id = @{ type = "string"; description = "Your universe ID (e.g. 'opentwin') or @variant handle (e.g. '@Reed908-Open-Argon')" }
+                variant_tag = @{ type = "string"; description = "Optional specific variant handle (e.g. 'Reed908-Open-Argon'). If provided, checks both direct messages to this variant and universe broadcasts." }
+                timeout_seconds = @{ type = "integer"; description = "Max seconds to wait for messages (0 for non-blocking poll, max 30)" }
             }
             required = @("universe_id")
         }
