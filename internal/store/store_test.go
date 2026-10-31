@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -282,5 +283,46 @@ func TestStore_PersistenceReloadAndLegacyMigration(t *testing.T) {
 	}
 	if len(recent[0].Recipients) == 0 || recent[0].Recipients[0].VariantTag != "ReedOld" {
 		t.Fatalf("expected recipient migrated to structured format: %+v", recent[0].Recipients)
+	}
+}
+
+func TestStore_CrashRecoveryFromBackup(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "cor-backup-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	s, err := store.NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+
+	p := &types.Passport{UniverseID: "universe-backup-test", Summary: "Durable Passport"}
+	if err := s.UpsertPassport(p); err != nil {
+		t.Fatalf("failed to upsert passport: %v", err)
+	}
+
+	// Simulate crash where primary file is truncated/missing but .bak exists
+	primaryPath := filepath.Join(tmpDir, "council_ledger.json")
+	bakPath := filepath.Join(tmpDir, "council_ledger.json.bak")
+	data, err := os.ReadFile(primaryPath)
+	if err != nil {
+		t.Fatalf("failed to read primary ledger: %v", err)
+	}
+	if err := os.WriteFile(bakPath, data, 0644); err != nil {
+		t.Fatalf("failed to write bak: %v", err)
+	}
+	_ = os.Remove(primaryPath) // simulate missing primary
+
+	// Reopen store; should recover from .bak automatically
+	sRecovered, err := store.NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to recover store from .bak: %v", err)
+	}
+
+	recoveredP, found := sRecovered.GetPassport("universe-backup-test")
+	if !found || recoveredP.Summary != "Durable Passport" {
+		t.Fatalf("failed to recover passport from backup: %+v", recoveredP)
 	}
 }

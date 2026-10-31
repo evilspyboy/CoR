@@ -56,7 +56,16 @@ func (s *Store) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// If primary ledger missing, check for .bak recovery
 	data, err := os.ReadFile(s.filePath)
+	if err != nil && os.IsNotExist(err) {
+		bakFile := s.filePath + ".bak"
+		if bakData, bakErr := os.ReadFile(bakFile); bakErr == nil {
+			data = bakData
+			err = nil
+			_ = os.WriteFile(s.filePath, bakData, 0644)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -146,19 +155,42 @@ func (s *Store) saveLocked() error {
 		return err
 	}
 
-	// Try atomic rename first
-	if err := os.Rename(tmpFile, s.filePath); err != nil {
-		// On Windows, if destination exists or sandbox blocks atomic replace, retry or fallback
-		_ = os.Remove(s.filePath)
-		if err := os.Rename(tmpFile, s.filePath); err != nil {
-			// Direct write fallback
-			if err := os.WriteFile(s.filePath, data, 0644); err != nil {
-				return err
+	// 1. Try atomic rename directly
+	if err := os.Rename(tmpFile, s.filePath); err == nil {
+		return nil
+	}
+
+	// 2. Windows fallback with crash-safe backup rotation:
+	// Never delete s.filePath before backup is safely in place.
+	bakFile := s.filePath + ".bak"
+	_ = os.Remove(bakFile)
+
+	hasBackup := false
+	if _, err := os.Stat(s.filePath); err == nil {
+		if err := os.Rename(s.filePath, bakFile); err == nil {
+			hasBackup = true
+		} else {
+			if oldData, readErr := os.ReadFile(s.filePath); readErr == nil {
+				if writeErr := os.WriteFile(bakFile, oldData, 0644); writeErr == nil {
+					hasBackup = true
+				}
 			}
-			_ = os.Remove(tmpFile)
 		}
 	}
-	return nil
+
+	// Move new tmpFile into primary location
+	if err := os.Rename(tmpFile, s.filePath); err == nil {
+		_ = os.Remove(bakFile)
+		return nil
+	}
+
+	// If moving tmpFile failed and we had a backup, restore primary from backup
+	if hasBackup {
+		_ = os.Rename(bakFile, s.filePath)
+	}
+	_ = os.Remove(tmpFile)
+
+	return fmt.Errorf("failed durable save to %s", s.filePath)
 }
 
 // UpsertVariantSession stores or updates an active variant session
