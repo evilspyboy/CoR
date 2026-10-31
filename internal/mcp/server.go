@@ -137,6 +137,10 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 						"type":        "string",
 						"description": "Absolute path to local project workspace root",
 					},
+					"replaces_variant": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional predecessor variant handle being explicitly succeeded (e.g. '@Reed104-COR-gemini-3.8-flash'). Binds transitive succession lineage and inherits open questions.",
+					},
 				},
 				"required": []string{"universe_id", "summary"},
 			},
@@ -149,7 +153,11 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 				"properties": map[string]interface{}{
 					"from_universe": map[string]interface{}{
 						"type":        "string",
-						"description": "Your universe ID",
+						"description": "Your universe ID or @variant handle",
+					},
+					"from_variant": map[string]interface{}{
+						"type":        "string",
+						"description": "Explicit sender variant handle (e.g. 'Reed104-COR-gemini-3.8-flash'). Avoids ambiguous universe-level sender resolution.",
 					},
 					"target_universe": map[string]interface{}{
 						"type":        "string",
@@ -161,7 +169,11 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 					},
 					"question": map[string]interface{}{
 						"type":        "string",
-						"description": "Specific, surgical question or collaborative request",
+						"description": "Specific question or collaborative request",
+					},
+					"in_reply_to": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional ID of open question being answered (e.g. 'msg-12345'). Validates responder authorization and closes question atomically.",
 					},
 					"context_snippet": map[string]interface{}{
 						"type":        "string",
@@ -465,7 +477,9 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 			InterfacesConsumed: cons,
 		}
 
-		registeredPassport, pending, err := s.hub.RegisterVariant(session, passport)
+		replacesVariant, _ := args["replaces_variant"].(string)
+
+		registeredPassport, pending, err := s.hub.RegisterVariant(session, passport, replacesVariant)
 		if err != nil {
 			return nil, err
 		}
@@ -494,24 +508,29 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 
 	case "council_consult":
 		from, _ := args["from_universe"].(string)
+		fromVar, _ := args["from_variant"].(string)
 		to, _ := args["target_universe"].(string)
 		topic, _ := args["topic"].(string)
 		question, _ := args["question"].(string)
 		snippet, _ := args["context_snippet"].(string)
+		inReplyTo, _ := args["in_reply_to"].(string)
 
 		// Look up active variant handle if registered
-		variantHandle := from
+		variantHandle := fromVar
 		fromUniverse := from
-		for _, sess := range s.hub.GetActiveVariants() {
-			if strings.EqualFold(sess.VariantTag, from) {
-				variantHandle = sess.VariantTag
-				fromUniverse = sess.UniverseID
-				break
-			}
-			if strings.EqualFold(sess.UniverseID, from) && sess.VariantTag != "" {
-				variantHandle = sess.VariantTag
-				fromUniverse = sess.UniverseID
-				break
+		if variantHandle == "" {
+			variantHandle = from
+			for _, sess := range s.hub.GetActiveVariants() {
+				if strings.EqualFold(sess.VariantTag, from) {
+					variantHandle = sess.VariantTag
+					fromUniverse = sess.UniverseID
+					break
+				}
+				if strings.EqualFold(sess.UniverseID, from) && sess.VariantTag != "" {
+					variantHandle = sess.VariantTag
+					fromUniverse = sess.UniverseID
+					break
+				}
 			}
 		}
 
@@ -525,6 +544,7 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 			Topic:          topic,
 			Content:        question,
 			ContextSnippet: snippet,
+			InReplyTo:      inReplyTo,
 		}
 
 		posted, err := s.hub.PostMessage(msg)
@@ -532,13 +552,26 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 			return nil, err
 		}
 
-		return map[string]interface{}{
-			"status":     "DISPATCHED",
-			"message_id": posted.ID,
-			"to":         to,
-			"ttl_min":    posted.TTLMinutes,
-			"note":       "Target will be advised of your query. If resolved locally before response, call council_withdraw_query.",
-		}, nil
+		res := map[string]interface{}{
+			"status":         posted.Status,
+			"message_id":     posted.ID,
+			"to":             to,
+			"question_state": posted.QuestionState,
+			"ttl_min":        posted.TTLMinutes,
+		}
+		if posted.OriginalTarget != "" {
+			res["original_target"] = posted.OriginalTarget
+		}
+		if posted.ActualRecipient != "" {
+			res["actual_recipient"] = posted.ActualRecipient
+		}
+		if inReplyTo != "" {
+			res["in_reply_to"] = inReplyTo
+			res["note"] = fmt.Sprintf("Response recorded; referenced question %s processed.", inReplyTo)
+		} else {
+			res["note"] = "Target will be advised of your query. If resolved locally before response, call council_withdraw_query."
+		}
+		return res, nil
 
 	case "council_listen":
 		uid, _ := args["universe_id"].(string)
@@ -617,7 +650,7 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 		msgID, _ := args["message_id"].(string)
 		note, _ := args["resolution_note"].(string)
 
-		err := s.store.UpdateMessageStatus(msgID, types.StatusWithdrawn)
+		err := s.store.WithdrawQuestion(msgID, "", time.Now().UTC())
 		if err != nil {
 			return nil, err
 		}
@@ -642,24 +675,53 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 			}, nil
 		}
 
-		// Find target universe or variant
-		var targetUniverse string = target
-		var activeVariant *types.VariantSession
+		// 1. Check if target is a known variant (active, offline, or historical/superseded)
+		if v, exists := s.store.GetVariantSession(target); exists {
+			p, _ := s.store.GetPassport(v.UniverseID)
+			if v.State == types.VariantSuperseded {
+				leaf, hops, _ := s.store.GetTransitiveSuccessor(target)
+				res := map[string]interface{}{
+					"state":               "SUPERSEDED",
+					"variant_tag":         v.VariantTag,
+					"universe_id":         v.UniverseID,
+					"handover_time":       v.HandoverTime,
+					"historical_variant":  v,
+					"historical_passport": v.HistoricalPassport,
+					"successor_hops":      hops,
+				}
+				if leaf != nil {
+					res["current_successor"] = leaf.VariantTag
+					res["current_successor_session"] = leaf
+				}
+				if p != nil {
+					res["universe_passport"] = p
+				}
+				return res, nil
+			}
 
-		for _, sess := range s.hub.GetActiveVariants() {
-			if strings.EqualFold(sess.VariantTag, target) {
-				activeVariant = sess
-				targetUniverse = sess.UniverseID
-				break
+			// Active or Offline variant
+			res := map[string]interface{}{
+				"active_variant": v,
+				"state":          v.State,
 			}
-			if strings.EqualFold(sess.UniverseID, target) && activeVariant == nil {
-				activeVariant = sess
+			if p != nil {
+				res["passport"] = p
 			}
+			return res, nil
 		}
 
-		p, found := s.store.GetPassport(targetUniverse)
+		// 2. Lookup as Universe ID
+		p, found := s.store.GetPassport(target)
 		if !found {
 			return nil, fmt.Errorf("universe or variant '%s' not found in council ledger", target)
+		}
+
+		var activeVariant *types.VariantSession
+		for _, sess := range s.hub.GetActiveVariants() {
+			if strings.EqualFold(sess.UniverseID, target) {
+				activeVariant = sess
+				break
+			}
 		}
 
 		res := map[string]interface{}{
@@ -667,6 +729,7 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 		}
 		if activeVariant != nil {
 			res["active_variant"] = activeVariant
+			res["state"] = activeVariant.State
 		}
 		return res, nil
 

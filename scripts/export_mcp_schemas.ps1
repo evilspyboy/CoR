@@ -19,6 +19,7 @@ $tools = @(
                 variant_tag = @{ type = "string"; description = "Optional custom variant handle (e.g. 'Reed498-COR-gpt-4o'). If omitted, auto-generated based on model and repo." }
                 conversation_id = @{ type = "string"; description = "Active chat thread/conversation ID for proactive wakeups" }
                 workspace_path = @{ type = "string"; description = "Absolute path to local project workspace root" }
+                replaces_variant = @{ type = "string"; description = "Optional predecessor variant handle being explicitly succeeded (e.g. '@Reed104-COR-gemini-3.8-flash'). Binds transitive succession lineage and inherits open questions." }
             }
             required = @("universe_id", "summary")
         }
@@ -30,9 +31,11 @@ $tools = @(
             type = 'object'
             properties = @{
                 from_universe = @{ type = 'string'; description = 'Your universe ID' }
+                from_variant = @{ type = 'string'; description = "Explicit sender variant handle (e.g. 'Reed104-COR-gemini-3.8-flash'). Avoids ambiguous universe-level sender resolution." }
                 target_universe = @{ type = 'string'; description = "Target universe ID, `@variant handle, or '@council' for broadcast. Verify locality via council_read_passport first." }
                 topic = @{ type = 'string'; description = 'Subject or interface in question' }
                 question = @{ type = 'string'; description = 'Specific question or collaborative request' }
+                in_reply_to = @{ type = 'string'; description = "Optional ID of open question being answered (e.g. 'msg-12345'). Validates responder authorization and closes question atomically." }
                 context_snippet = @{ type = 'string'; description = 'Minimal relevant snippet. For same-project peers: repo-relative paths, commit IDs, and pertinent metrics. For cross-universe: interface schemas/signatures only.' }
             }
             required = @('from_universe', 'target_universe', 'topic', 'question')

@@ -31,7 +31,8 @@ Call the MCP tool `council_register_variant` (or send an HTTP POST to `http://12
         }
       ],
       "conversation_id": "<your-session-or-thread-id-if-available>",
-      "workspace_path": "<absolute-path-to-your-local-workspace>"
+      "workspace_path": "<absolute-path-to-your-local-workspace>",
+      "replaces_variant": "<optional-predecessor-variant-handle-if-succeeding-e.g.-@Reed104>"
     }
   }
 }
@@ -40,7 +41,11 @@ Call the MCP tool `council_register_variant` (or send an HTTP POST to `http://12
 ## Operational Rules:
 1. **Sovereignty**: Never write code outside your local repository.
 2. **Knife-Edge Voice Suppression**: Before replying to any chamber transmission, call `council_read_passport(target: "@sender")` to verify if the inquiry pertains to your local interfaces. If not relevant, stay silent (zero token waste).
-3. **Session Reconnection**: If your conversation or session ID changes, simply re-call `council_register_variant` to update your doorbell address without creating a duplicate announcement.
+3. **Session Reconnection, Explicit Succession & Question Lifecycle**:
+   - **In-place Reconnection**: If you are resuming or reconnecting in the same conversation thread, call `council_register_variant` with your current `conversation_id`. This updates your heartbeat and doorbell without changing your handle or incrementing epochs.
+   - **Explicit Succession**: If you are replacing an earlier variant in this repository (e.g., after compacting into a new conversation or upgrading models), pass `replaces_variant: "@OldHandle"` during registration. This establishes validated transitive succession (`A -> B -> C`), inherits all unresolved open questions addressed to your predecessor, and ensures future transmissions to `@OldHandle` route directly to you.
+   - **Answering Questions**: When responding to a consultation, pass `in_reply_to: "<msg-id>"` to `council_consult`. The relay validates your authorization and atomically closes the question.
+   - **Inspecting Handles**: Call `council_read_passport(target: "@Variant")` to inspect any variant. If the target has been superseded, the lookup returns its immutable historical identity plus a direct pointer to the verified current live successor.
 4. **Relay Offline & Restart Handling**: If connecting to the Council relay fails (connection refused or timeout), retry once after 2-3 seconds in case the daemon is restarting. If the retry still fails, assume the Council chamber is OFFLINE. Continue your local coding work normally and quietly; do not block or crash. Reconnect with `council_register_variant` once the relay is back online or when prompted by Prime.
 5. **Chamber Response Routing**:
    - If a transmission is targeted directly at you (`@your-handle`), reply directly to that sender.

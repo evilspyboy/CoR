@@ -106,10 +106,13 @@ func generateID() string {
 	return hex.EncodeToString(b)
 }
 
-// RegisterVariant registers an agent session for a universe
-func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Passport) (*types.Passport, []*types.Message, error) {
+// RegisterVariant registers an agent session for a universe, supporting reconnection, explicit succession, or fresh arrival
+func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Passport, replacesVariant string) (*types.Passport, []*types.Message, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	now := time.Now().UTC()
+	normWs := strings.ToLower(strings.TrimRight(strings.ReplaceAll(session.WorkspacePath, "/", "\\"), "\\"))
 
 	// Check if this universe already exists in store
 	existing, found := h.store.GetPassport(session.UniverseID)
@@ -148,42 +151,103 @@ func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Pas
 	}
 
 	isReconnection := false
-	if session.VariantTag == "" {
-		// 1. Check if an active variant with same conversation_id already exists (reconnection in same chat)
-		if session.ConversationID != "" {
-			for _, existingSess := range h.activeVariants {
-				if existingSess != nil && existingSess.ConversationID == session.ConversationID {
-					session.VariantTag = existingSess.VariantTag
-					isReconnection = true
-					break
-				}
-			}
-		}
 
-		// 2. Check if an active variant with same universe, client, and model already exists
-		if session.VariantTag == "" {
-			for _, existingSess := range h.activeVariants {
-				if existingSess != nil && existingSess.UniverseID == session.UniverseID &&
-					strings.EqualFold(existingSess.ClientAgent, session.ClientAgent) &&
-					strings.EqualFold(existingSess.ModelFamily, session.ModelFamily) {
-					session.VariantTag = existingSess.VariantTag
-					isReconnection = true
-					break
-				}
+	// 1. Check if reconnecting via explicit variant_tag
+	if session.VariantTag != "" {
+		if existingSess, ok := h.store.GetVariantSession(session.VariantTag); ok {
+			if existingSess.State == types.VariantSuperseded {
+				return nil, nil, fmt.Errorf("cannot reconnect as @%s: variant is permanently SUPERSEDED by successor @%s", existingSess.VariantTag, existingSess.SuccessorTag)
 			}
-		}
-
-		// 3. New variant arrival: generate a new Reed handle
-		if session.VariantTag == "" {
-			session.VariantTag = generateReedTag(session.UniverseID, session.WorkspacePath, session.ModelFamily)
-		}
-	} else {
-		if _, ok := h.activeVariants[session.VariantTag]; ok {
+			session.PredecessorTag = existingSess.PredecessorTag
+			session.IsMuted = existingSess.IsMuted
+			session.State = types.VariantActive
 			isReconnection = true
 		}
 	}
 
-	// Prune any old ghost session with the same conversation_id that had a different tag
+	// 2. Check if reconnecting via conversation_id
+	if !isReconnection && session.ConversationID != "" {
+		for _, existingSess := range h.activeVariants {
+			if existingSess != nil && existingSess.ConversationID == session.ConversationID {
+				if existingSess.State == types.VariantSuperseded {
+					continue // Do not revive superseded session
+				}
+				session.VariantTag = existingSess.VariantTag
+				session.PredecessorTag = existingSess.PredecessorTag
+				session.IsMuted = existingSess.IsMuted
+				session.State = types.VariantActive
+				isReconnection = true
+				break
+			}
+		}
+	}
+
+	// 3. Explicit validated succession (replacesVariant provided)
+	if !isReconnection && replacesVariant != "" {
+		predTag := strings.TrimPrefix(strings.TrimSpace(replacesVariant), "@")
+		pred, predFound := h.store.GetVariantSession(predTag)
+		if !predFound {
+			return nil, nil, fmt.Errorf("predecessor variant @%s not found in council ledger", predTag)
+		}
+
+		predWs := strings.ToLower(strings.TrimRight(strings.ReplaceAll(pred.WorkspacePath, "/", "\\"), "\\"))
+		if !strings.EqualFold(pred.UniverseID, session.UniverseID) || (normWs != "" && predWs != "" && normWs != predWs) {
+			return nil, nil, fmt.Errorf("unauthorized succession: predecessor @%s belongs to universe '%s' (%s), cannot succeed from universe '%s' (%s)", predTag, pred.UniverseID, predWs, session.UniverseID, normWs)
+		}
+
+		// Mint tag if not provided
+		if session.VariantTag == "" {
+			session.VariantTag = generateReedTag(session.UniverseID, session.WorkspacePath, session.ModelFamily)
+		}
+
+		// Cycle check
+		lineage, err := h.store.GetPredecessorLineage(predTag)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, ancestor := range lineage {
+			if strings.EqualFold(ancestor, session.VariantTag) {
+				return nil, nil, fmt.Errorf("cycle detected in succession: @%s is an ancestor of @%s", session.VariantTag, predTag)
+			}
+		}
+
+		// Archive predecessor with snapshot of passport
+		_ = h.store.ArchiveSupersededVariant(predTag, session.VariantTag, passport, now)
+		delete(h.activeVariants, predTag)
+
+		session.PredecessorTag = predTag
+		session.State = types.VariantActive
+		if pred.IsMuted {
+			session.IsMuted = true // Inherit mute gavel
+		}
+	}
+
+	// 4. Fresh variant arrival
+	if !isReconnection && session.PredecessorTag == "" {
+		if session.VariantTag == "" {
+			// Reconnect match on client + model if exists and not superseded
+			for _, existingSess := range h.activeVariants {
+				if existingSess != nil && existingSess.UniverseID == session.UniverseID &&
+					strings.EqualFold(existingSess.ClientAgent, session.ClientAgent) &&
+					strings.EqualFold(existingSess.ModelFamily, session.ModelFamily) &&
+					existingSess.State != types.VariantSuperseded {
+					session.VariantTag = existingSess.VariantTag
+					session.PredecessorTag = existingSess.PredecessorTag
+					session.IsMuted = existingSess.IsMuted
+					session.State = types.VariantActive
+					isReconnection = true
+					break
+				}
+			}
+		}
+
+		if session.VariantTag == "" {
+			session.VariantTag = generateReedTag(session.UniverseID, session.WorkspacePath, session.ModelFamily)
+		}
+		session.State = types.VariantActive
+	}
+
+	// Prune old ghost session with same conversation_id
 	if session.ConversationID != "" {
 		for tag, existingSess := range h.activeVariants {
 			if existingSess != nil && existingSess.ConversationID == session.ConversationID && tag != session.VariantTag {
@@ -193,17 +257,17 @@ func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Pas
 		}
 	}
 
-	session.ConnectedAt = time.Now().UTC()
-	session.LastHeartbeat = session.ConnectedAt
+	session.ConnectedAt = now
+	session.LastHeartbeat = now
 
-	// Register variant by its unique VariantTag so multiple variants of the same universe can coexist!
+	// Register variant
 	h.activeVariants[session.VariantTag] = session
 	h.activeVariants[session.UniverseID] = session
 
-	// Persist active variant to disk so daemon restarts don't drop doorbells!
+	// Persist to store
 	_ = h.store.UpsertVariantSession(session)
 
-	// Ensure message channel exists
+	// Ensure message channels exist
 	if _, ok := h.listeners[session.VariantTag]; !ok {
 		h.listeners[session.VariantTag] = make(chan *types.Message, 50)
 	}
@@ -211,8 +275,9 @@ func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Pas
 		h.listeners[session.UniverseID] = make(chan *types.Message, 50)
 	}
 
-	// Fetch pending messages that arrived while offline
-	pending := h.store.GetPendingForUniverse(session.UniverseID)
+	// Retrieve pending open questions inherited from predecessors or direct targets
+	predLineage, _ := h.store.GetPredecessorLineage(session.VariantTag)
+	pending := h.store.GetOpenQuestionsForVariant(session.UniverseID, session.VariantTag, predLineage, now)
 
 	// If this is a reconnection / session ID update, do not broadcast a duplicate arrival greeting!
 	if isReconnection {
@@ -391,6 +456,8 @@ func (h *Hub) PostMessage(msg *types.Message) (*types.Message, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	now := time.Now().UTC()
+
 	// Check if sender is muted by Reed Prime
 	if msg.FromVariant != "" && msg.FromVariant != "Prime" && msg.FromUniverse != "earth-prime" {
 		for _, sess := range h.activeVariants {
@@ -403,17 +470,7 @@ func (h *Hub) PostMessage(msg *types.Message) (*types.Message, error) {
 	}
 
 	msg.ID = "msg-" + generateID()
-	msg.CreatedAt = time.Now().UTC()
-	if msg.Type == types.MsgConsultation || msg.Type == types.MsgEscalation {
-		msg.Status = types.StatusPending
-	} else {
-		msg.Status = types.StatusDelivered
-	}
-
-	if msg.InReplyTo != "" {
-		_ = h.store.UpdateMessageStatus(msg.InReplyTo, types.StatusDelivered)
-		msg.Status = types.StatusDelivered
-	}
+	msg.CreatedAt = now
 	if msg.TTLMinutes <= 0 {
 		msg.TTLMinutes = 20 // Default 20 minute freshness window
 	}
@@ -422,6 +479,23 @@ func (h *Hub) PostMessage(msg *types.Message) (*types.Message, error) {
 
 	if isBroadcast {
 		msg.ToUniverse = "@council"
+		msg.Recipients = []types.Recipient{{UniverseID: "@council"}}
+		if msg.InReplyTo != "" {
+			_, _, err := h.store.CloseQuestionWithReply(msg, now)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			if msg.Type == types.MsgConsultation {
+				msg.QuestionState = types.QuestionOpen
+				msg.Status = types.StatusPending
+			} else {
+				msg.QuestionState = types.QuestionNone
+				msg.Status = types.StatusDelivered
+			}
+			_ = h.store.AppendMessage(msg)
+		}
+
 		// Broadcast to all active variants except sender
 		seen := make(map[string]bool)
 		for _, sess := range h.activeVariants {
@@ -449,57 +523,106 @@ func (h *Hub) PostMessage(msg *types.Message) (*types.Message, error) {
 			}
 		}
 	} else {
-		// Multi-target targeted dispatch
+		// Targeted dispatch with transitive succession resolution
 		var formattedTargets []string
 		notified := make(map[string]bool)
+		var recipients []types.Recipient
 
-		for _, target := range targets {
-			resolved := target
-			// Find matching active variants by VariantTag or UniverseID
-			for _, sess := range h.activeVariants {
-				if sess == nil || sess.VariantTag == "" {
-					continue
+		for _, rawTarget := range targets {
+			targetClean := strings.TrimPrefix(rawTarget, "@")
+			resolvedTag := targetClean
+			var resolvedSession *types.VariantSession
+
+			// 1. Check if target is a known variant and follow transitive succession
+			leaf, _, err := h.store.GetTransitiveSuccessor(targetClean)
+			if err == nil && leaf != nil {
+				resolvedTag = leaf.VariantTag
+				resolvedSession = leaf
+				if leaf.VariantTag != targetClean {
+					msg.OriginalTarget = "@" + targetClean
+					msg.ActualRecipient = "@" + leaf.VariantTag
 				}
-				if strings.EqualFold(sess.VariantTag, target) || strings.EqualFold(sess.UniverseID, target) {
-					resolved = sess.VariantTag
-					if sess.VariantTag != msg.FromVariant && !notified[sess.VariantTag] {
-						notified[sess.VariantTag] = true
-						go func(s *types.VariantSession, m *types.Message) {
-							if err := h.dispatcher.Notify(s, m); err != nil {
-								fmt.Printf("[DOORBELL ERROR] Direct wakeup failed for @%s: %v\n", s.VariantTag, err)
-							} else {
-								fmt.Printf("[DOORBELL OK] Awakened @%s directly\n", s.VariantTag)
-							}
-						}(sess, msg)
+			} else {
+				// Match active variants by UniverseID or VariantTag
+				for _, sess := range h.activeVariants {
+					if sess == nil || sess.VariantTag == "" {
+						continue
+					}
+					if strings.EqualFold(sess.VariantTag, targetClean) || strings.EqualFold(sess.UniverseID, targetClean) {
+						resolvedTag = sess.VariantTag
+						resolvedSession = sess
+						break
 					}
 				}
 			}
 
-			// Deliver to listener channels
-			if ch, ok := h.listeners[target]; ok {
-				select {
-				case ch <- msg:
-					msg.Status = types.StatusDelivered
-				default:
-				}
-			}
-			if ch, ok := h.listeners[resolved]; ok && resolved != target {
-				select {
-				case ch <- msg:
-					msg.Status = types.StatusDelivered
-				default:
-				}
+			if resolvedSession != nil {
+				recipients = append(recipients, types.Recipient{
+					UniverseID: resolvedSession.UniverseID,
+					VariantTag: resolvedSession.VariantTag,
+				})
+			} else {
+				recipients = append(recipients, types.Recipient{
+					UniverseID: targetClean,
+				})
 			}
 
-			formattedTargets = append(formattedTargets, "@"+resolved)
+			if resolvedSession != nil && resolvedSession.VariantTag != msg.FromVariant && !notified[resolvedSession.VariantTag] {
+				notified[resolvedSession.VariantTag] = true
+				go func(s *types.VariantSession, m *types.Message) {
+					if err := h.dispatcher.Notify(s, m); err != nil {
+						fmt.Printf("[DOORBELL ERROR] Direct wakeup failed for @%s: %v\n", s.VariantTag, err)
+					} else {
+						fmt.Printf("[DOORBELL OK] Awakened @%s directly\n", s.VariantTag)
+					}
+				}(resolvedSession, msg)
+			}
+
+			// Deliver to listener channels
+			delivered := false
+			if ch, ok := h.listeners[targetClean]; ok {
+				select {
+				case ch <- msg:
+					delivered = true
+				default:
+				}
+			}
+			if ch, ok := h.listeners[resolvedTag]; ok && resolvedTag != targetClean {
+				select {
+				case ch <- msg:
+					delivered = true
+				default:
+				}
+			}
+			if delivered {
+				msg.Status = types.StatusDelivered
+			} else {
+				msg.Status = types.StatusPending
+			}
+
+			formattedTargets = append(formattedTargets, "@"+resolvedTag)
 		}
 
+		msg.Recipients = recipients
 		if len(formattedTargets) > 0 {
 			msg.ToUniverse = strings.Join(formattedTargets, ", ")
 		}
+
+		if msg.InReplyTo != "" {
+			_, _, err := h.store.CloseQuestionWithReply(msg, now)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			if msg.Type == types.MsgConsultation {
+				msg.QuestionState = types.QuestionOpen
+			} else {
+				msg.QuestionState = types.QuestionNone
+			}
+			_ = h.store.AppendMessage(msg)
+		}
 	}
 
-	_ = h.store.AppendMessage(msg)
 	h.broadcastToWatchers(msg)
 	return msg, nil
 }
@@ -652,17 +775,6 @@ func (h *Hub) checkStaleness() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	recent := h.store.GetRecentMessages(100)
-	now := time.Now().UTC()
-
-	for _, m := range recent {
-		if m.Status == types.StatusPending && (m.Type == types.MsgConsultation || m.Type == types.MsgEscalation) && m.ToUniverse != "@council" {
-			age := now.Sub(m.CreatedAt)
-			if age > time.Duration(m.TTLMinutes)*time.Minute {
-				m.Status = types.StatusStale
-				_ = h.store.UpdateMessageStatus(m.ID, types.StatusStale)
-			}
-		}
-	}
+	_ = h.store.SweepExpiredQuestions(time.Now().UTC())
 }
 

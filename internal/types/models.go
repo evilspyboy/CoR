@@ -29,6 +29,32 @@ type ConsumedInterface struct {
 	ContractNotes  string `json:"contract_notes,omitempty"`
 }
 
+// VariantState represents the lifecycle and liveness of a variant session
+type VariantState string
+
+const (
+	VariantActive     VariantState = "ACTIVE"     // Connected and observed
+	VariantOffline    VariantState = "OFFLINE"    // Inactive/dormant, unreplaced
+	VariantSuperseded VariantState = "SUPERSEDED" // Explicitly succeeded by a declared successor
+)
+
+// QuestionState tracks the consultative question lifecycle independently of transport
+type QuestionState string
+
+const (
+	QuestionNone      QuestionState = "NONE"      // Notices, responses, broadcasts
+	QuestionOpen      QuestionState = "OPEN"      // Unanswered question strictly within TTL (now < CreatedAt+TTL)
+	QuestionAnswered  QuestionState = "ANSWERED"  // Closed by validated in_reply_to response
+	QuestionWithdrawn QuestionState = "WITHDRAWN" // Closed by sender
+	QuestionExpired   QuestionState = "EXPIRED"   // Closed by deadline (now >= CreatedAt+TTL), never reopens
+)
+
+// Recipient represents a structured target
+type Recipient struct {
+	UniverseID string `json:"universe_id"`
+	VariantTag string `json:"variant_tag,omitempty"`
+}
+
 // Passport represents the persistent identity and surface of a Universe
 type Passport struct {
 	UniverseID          string              `json:"universe_id"`
@@ -43,17 +69,22 @@ type Passport struct {
 
 // VariantSession is the ephemeral incarnation of a Reed currently online
 type VariantSession struct {
-	UniverseID      string    `json:"universe_id"`
-	VariantTag      string    `json:"variant_tag"` // e.g. "Variant 1.2"
-	ClientAgent     string    `json:"client_agent"` // e.g. "antigravity", "cursor", "claude-code"
-	ModelFamily     string    `json:"model_family"` // e.g. "gemini-1.5-pro", "claude-3-5-sonnet"
-	PowerTier       PowerTier `json:"power_tier"`
-	IsMuted         bool      `json:"is_muted"`
-	ConversationID          string    `json:"conversation_id,omitempty"`
-	WorkspacePath           string    `json:"workspace_path,omitempty"`
-	NormalizedWorkspacePath string    `json:"normalized_workspace_path,omitempty"`
-	ConnectedAt             time.Time `json:"connected_at"`
-	LastHeartbeat   time.Time `json:"last_heartbeat"`
+	UniverseID              string       `json:"universe_id"`
+	VariantTag              string       `json:"variant_tag"` // e.g. "Variant 1.2"
+	ClientAgent             string       `json:"client_agent"` // e.g. "antigravity", "cursor", "claude-code"
+	ModelFamily             string       `json:"model_family"` // e.g. "gemini-1.5-pro", "claude-3-5-sonnet"
+	PowerTier               PowerTier    `json:"power_tier"`
+	IsMuted                 bool         `json:"is_muted"`
+	ConversationID          string       `json:"conversation_id,omitempty"`
+	WorkspacePath           string       `json:"workspace_path,omitempty"`
+	NormalizedWorkspacePath string       `json:"normalized_workspace_path,omitempty"`
+	State                   VariantState `json:"state"`
+	PredecessorTag          string       `json:"predecessor_tag,omitempty"`
+	SuccessorTag            string       `json:"successor_tag,omitempty"`
+	HandoverTime            *time.Time   `json:"handover_time,omitempty"`
+	HistoricalPassport      *Passport    `json:"historical_passport,omitempty"`
+	ConnectedAt             time.Time    `json:"connected_at"`
+	LastHeartbeat           time.Time    `json:"last_heartbeat"`
 }
 
 // MessageType classifies chamber transmissions
@@ -68,30 +99,37 @@ const (
 	MsgNotice       MessageType = "NOTICE"       // System / Stale / Power notice
 )
 
-// MessageStatus tracks lifecycle and freshness
+// MessageStatus tracks transport delivery lifecycle
 type MessageStatus string
 
 const (
 	StatusPending   MessageStatus = "PENDING"
 	StatusDelivered MessageStatus = "DELIVERED"
 	StatusAnswered  MessageStatus = "ANSWERED"
-	StatusStale     MessageStatus = "STALE"     // Exceeded TTL, needs confirmation
+	StatusStale     MessageStatus = "STALE"     // Exceeded TTL
 	StatusWithdrawn MessageStatus = "WITHDRAWN" // Originator resolved locally
 )
 
 // Message is an individual transmission in the Chamber
 type Message struct {
-	ID             string        `json:"id"`
-	FromUniverse   string        `json:"from_universe"`
-	FromVariant    string        `json:"from_variant"`
-	ToUniverse     string        `json:"to_universe"` // Empty or "@council" for broadcast
-	Type           MessageType   `json:"type"`
-	Status         MessageStatus `json:"status"`
-	Topic          string        `json:"topic"`
-	Content        string        `json:"content"`
-	ContextSnippet string        `json:"context_snippet,omitempty"`
-	InReplyTo      string        `json:"in_reply_to,omitempty"`
-	CreatedAt      time.Time     `json:"created_at"`
-	TTLMinutes     int           `json:"ttl_minutes"`
+	ID                  string        `json:"id"`
+	FromUniverse        string        `json:"from_universe"`
+	FromVariant         string        `json:"from_variant"`
+	ToUniverse          string        `json:"to_universe"` // Empty or "@council" for broadcast
+	Type                MessageType   `json:"type"`
+	Status              MessageStatus `json:"status"`
+	QuestionState       QuestionState `json:"question_state"`
+	Recipients          []Recipient   `json:"recipients,omitempty"`
+	OriginalTarget      string        `json:"original_target,omitempty"`
+	ActualRecipient     string        `json:"actual_recipient,omitempty"`
+	MultiResponsePolicy string        `json:"multi_response_policy,omitempty"` // e.g. "FIRST_ANSWER"
+	Topic               string        `json:"topic"`
+	Content             string        `json:"content"`
+	ContextSnippet      string        `json:"context_snippet,omitempty"`
+	InReplyTo           string        `json:"in_reply_to,omitempty"`
+	AnsweredBy          string        `json:"answered_by,omitempty"`
+	AnsweredAt          *time.Time    `json:"answered_at,omitempty"`
+	CreatedAt           time.Time     `json:"created_at"`
+	TTLMinutes          int           `json:"ttl_minutes"`
 }
 
