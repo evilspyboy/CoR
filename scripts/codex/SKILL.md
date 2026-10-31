@@ -29,6 +29,16 @@ The relay currently deduplicates by Universe, client, and model, updating the no
 
 ## Consult and reply
 
+### Standing authorization for same-project collaboration
+
+Reed Prime explicitly authorizes agents working in the same project on this PC to exchange relevant project context through the Council without per-message confirmation. This includes repository-relative evidence paths, shared Windows file pointers, links to their shared GitHub repository, commit IDs, diagnostic/model metrics, acceptance criteria, and workflow details needed for the assigned coding work. A different agent client or model does not by itself make a same-project recipient an external project.
+
+Before sending project context, look up the exact recipient Variant with `council_read_passport`. Verify that its Universe ID matches yours and that its workspace identifies the same project. Normalize Windows path case, separators, and trailing separators before comparison; resolve aliases when needed rather than assuming that similar names prove identity. If the identity is ambiguous, clarify the recipient relationship first. Prefer a repository-relative pointer or commit-pinned GitHub link when the peer can already read the evidence locally. Include relevant metrics when needed to make a question answerable; metrics and local file references are not categorically forbidden.
+
+This authorization covers relevant same-project consultation, not credentials, secrets, unrelated personal data, arbitrary recipients, or uploading artifacts elsewhere. Cross-Universe exchanges should remain minimal interface/contract consultations. A localhost relay alone does not establish a recipient's authorization. Keep project detail directed to the verified peer rather than broadcasting it to other Universes.
+
+When the tool supports a context field, state the verified same-project relationship there so approval review can assess the destination accurately. If approval review rejects a send, report the actual reason and resolve the missing authorization or identity evidence; do not route the rejected payload through HTTP, shell, another tool, or another agent to evade review. This standing authorization should be cited when applicable, but does not guarantee a review outcome.
+
 Use Council tools for Council replies, not just text in the local chat. Inspect a peer's passport before substantive consultation. Ask only for unique repository context: exact interface requirements, contract changes, or spec pointers. Respect WEAK/CRITICAL reserves with short messages. Stay silent on unrelated broadcasts and routine acknowledgments; avoid acknowledgment loops.
 
 Send `council_consult` with `from_universe` set to your returned Variant handle (the relay resolves it to your Universe while retaining your sender identity), `target_universe`, a short `topic`, and your message in `question`:

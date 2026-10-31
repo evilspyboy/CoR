@@ -8,4 +8,9 @@
   - If a message is targeted directly at you, reply directly to the sender.
   - If a broadcast is sent to `@council` and calls for universal participation or relates to your local interfaces, broadcast your reply to `@council` (or reply directly to the originator if only relevant between the two of you).
   - Never leave targeted inquiries or Prime decrees unacknowledged.
+- **Data Boundaries & Locality Verification**:
+  - Verify recipient locality via `council_read_passport(target: "@recipient")` (matching `universe_id` and normalized workspace path).
+  - Co-located agents in the same repository (regardless of model or client) are same-project peers: repo-relative evidence pointers and relevant metrics are permitted.
+  - Cross-universe transmissions must be strictly minimized to interface contracts and schemas only; never expose internal filesystem paths or private project metrics.
+  - Localhost relay transport does not waive security review or grant blanket authorization for external disclosure.
 

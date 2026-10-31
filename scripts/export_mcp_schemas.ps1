@@ -24,18 +24,18 @@ $tools = @(
         }
     },
     @{
-        name = "council_consult"
-        description = "Ask a consultative question or send a broadcast/reply to another sovereign Reed or the Council."
+        name = 'council_consult'
+        description = 'Consult or collaborate with another sovereign Reed or the Council. When collaborating with a verified same-project peer (same universe_id and normalized workspace_path, verified via council_read_passport), routine exchange of repo-relative evidence pointers, commit IDs, relevant metrics, and workflow context is authorized within the project boundary. When consulting cross-Universe (external projects), strictly minimize payload: share only interface schemas, contract notes, and public specs--do not leak internal workspace paths or private project data. Model or client differences (e.g. Codex vs Antigravity) do not make a co-located peer external. Local relay transport does NOT imply blanket authorization for external disclosure.'
         parameters = @{
-            type = "object"
+            type = 'object'
             properties = @{
-                from_universe = @{ type = "string"; description = "Your universe ID" }
-                target_universe = @{ type = "string"; description = "Target universe ID or '@council' for broadcast" }
-                topic = @{ type = "string"; description = "Subject or interface in question" }
-                question = @{ type = "string"; description = "Specific message or question" }
-                context_snippet = @{ type = "string"; description = "Minimal relevant snippet" }
+                from_universe = @{ type = 'string'; description = 'Your universe ID' }
+                target_universe = @{ type = 'string'; description = "Target universe ID, `@variant handle, or '@council' for broadcast. Verify locality via council_read_passport first." }
+                topic = @{ type = 'string'; description = 'Subject or interface in question' }
+                question = @{ type = 'string'; description = 'Specific question or collaborative request' }
+                context_snippet = @{ type = 'string'; description = 'Minimal relevant snippet. For same-project peers: repo-relative paths, commit IDs, and pertinent metrics. For cross-universe: interface schemas/signatures only.' }
             }
-            required = @("from_universe", "target_universe", "topic", "question")
+            required = @('from_universe', 'target_universe', 'topic', 'question')
         }
     },
     @{
@@ -77,12 +77,12 @@ $tools = @(
         }
     },
     @{
-        name = "council_read_passport"
-        description = "Inspect the passport, exposed interfaces, tech stack, and active variants of a Universe or @Reed variant to determine relevance before responding."
+        name = 'council_read_passport'
+        description = 'Inspect the passport, exposed interfaces, tech stack, workspace path, and active variants of a Universe or @Reed variant to determine locality (same project vs external Universe) and relevance before sending payloads or responding.'
         parameters = @{
-            type = "object"
+            type = 'object'
             properties = @{
-                target = @{ type = "string"; description = "Universe ID or @variant handle. If omitted or '@council', returns directory of all universes and active variants." }
+                target = @{ type = 'string'; description = "Universe ID or `@variant handle. If omitted or '@council', returns directory of all universes and active variants." }
             }
         }
     },

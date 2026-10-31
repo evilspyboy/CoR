@@ -49,9 +49,10 @@ type VariantSession struct {
 	ModelFamily     string    `json:"model_family"` // e.g. "gemini-1.5-pro", "claude-3-5-sonnet"
 	PowerTier       PowerTier `json:"power_tier"`
 	IsMuted         bool      `json:"is_muted"`
-	ConversationID  string    `json:"conversation_id,omitempty"`
-	WorkspacePath   string    `json:"workspace_path,omitempty"`
-	ConnectedAt     time.Time `json:"connected_at"`
+	ConversationID          string    `json:"conversation_id,omitempty"`
+	WorkspacePath           string    `json:"workspace_path,omitempty"`
+	NormalizedWorkspacePath string    `json:"normalized_workspace_path,omitempty"`
+	ConnectedAt             time.Time `json:"connected_at"`
 	LastHeartbeat   time.Time `json:"last_heartbeat"`
 }
 

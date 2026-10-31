@@ -24,6 +24,17 @@ func NewServer(h *hub.Hub, s *store.Store) *Server {
 	return &Server{hub: h, store: s}
 }
 
+// NormalizeWorkspacePath cleans and normalizes a Windows or POSIX path for comparison
+func NormalizeWorkspacePath(p string) string {
+	if p == "" {
+		return ""
+	}
+	p = strings.TrimSpace(p)
+	p = strings.ReplaceAll(p, "/", "\\")
+	p = strings.TrimRight(p, "\\")
+	return strings.ToLower(p)
+}
+
 // JSON-RPC 2.0 request/response structures
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -132,7 +143,7 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "council_consult",
-			Description: "Ask a consultative question of another sovereign Reed or the Council. Target Reed advises on their interfaces/specs without writing code for you.",
+			Description: "Consult or collaborate with another sovereign Reed or the Council. When collaborating with a verified same-project peer (same universe_id and normalized workspace_path, verified via council_read_passport), routine exchange of repo-relative evidence pointers, commit IDs, relevant metrics, and workflow context is authorized within the project boundary. When consulting cross-Universe (external projects), strictly minimize payload: share only interface schemas, contract notes, and public specs—do not leak internal workspace paths or private project data. Model or client differences (e.g. Codex vs Antigravity) do not make a co-located peer external. Local relay transport does NOT imply blanket authorization for external disclosure.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -142,7 +153,7 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 					},
 					"target_universe": map[string]interface{}{
 						"type":        "string",
-						"description": "Target universe ID (e.g. 'earth-core-api') or '@council' for broadcast",
+						"description": "Target universe ID, @variant handle, or '@council' for broadcast. Verify locality via council_read_passport first.",
 					},
 					"topic": map[string]interface{}{
 						"type":        "string",
@@ -150,11 +161,11 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 					},
 					"question": map[string]interface{}{
 						"type":        "string",
-						"description": "Specific, surgical question or clarification",
+						"description": "Specific, surgical question or collaborative request",
 					},
 					"context_snippet": map[string]interface{}{
 						"type":        "string",
-						"description": "Minimal relevant snippet (keep concise to respect transmitter power)",
+						"description": "Minimal relevant snippet. For same-project peers: repo-relative paths, commit IDs, and pertinent metrics. For cross-universe: interface schemas/signatures only.",
 					},
 				},
 				"required": []string{"from_universe", "target_universe", "topic", "question"},
@@ -224,7 +235,7 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "council_read_passport",
-			Description: "Inspect the passport, exposed interfaces, tech stack, and active variants of a Universe or @Reed variant to determine relevance before responding.",
+			Description: "Inspect the passport, exposed interfaces, tech stack, workspace path, and active variants of a Universe or @Reed variant to determine locality (same project vs external Universe) and relevance before sending payloads or responding.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -435,13 +446,14 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 		}
 
 		session := &types.VariantSession{
-			UniverseID:     uid,
-			VariantTag:     variantTag,
-			ClientAgent:    client,
-			ModelFamily:    model,
-			PowerTier:      tier,
-			ConversationID: convID,
-			WorkspacePath:  wsPath,
+			UniverseID:              uid,
+			VariantTag:              variantTag,
+			ClientAgent:             client,
+			ModelFamily:             model,
+			PowerTier:               tier,
+			ConversationID:          convID,
+			WorkspacePath:           wsPath,
+			NormalizedWorkspacePath: NormalizeWorkspacePath(wsPath),
 		}
 
 		passport := &types.Passport{
@@ -471,8 +483,9 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 				"welcome":              fmt.Sprintf("Welcome to the Council of Reeds, @%s.", session.VariantTag),
 				"universe_sovereignty": "Each project repository is a sovereign 'Universe'. You only write code within your own universe. You never touch foreign code or leak local repository details.",
 				"variants_and_epochs":  "Your universe is persistent, but your agent session is an ephemeral 'Variant'. When sessions compact, restart, or change conversation IDs, you reconnect to become the next Variant incarnation of your universe.",
-				"multi_model_variants": "Multiple Reeds can concurrently inhabit the same Universe (e.g. Gemini, GPT/Codex, Claude collaborating in the same project). Each model receives a unique @Reed-XXX-<model> handle to communicate and divide tasks.",
+				"multi_model_variants": "Multiple Reeds can concurrently inhabit the same Universe (e.g. Gemini, GPT/Codex, Claude collaborating in the same project). Model or client differences alone DO NOT make a co-located variant external to the project. They share the same local repository boundary.",
 				"knife_edge_rule":      "Zero token waste: When messages arrive, inspect the sender via `council_read_passport`. If an inquiry does not specifically require your repository's domain or interfaces, remain silent. Zero conversational filler.",
+				"data_boundary_and_locality": "Local relay transport does NOT imply blanket authorization for external disclosure. Always verify recipient locality via council_read_passport. Co-located variants sharing the same verified universe_id and normalized workspace_path are intra-project peers: repo-relative evidence pointers (e.g. tests/fixtures/output.json, git commit SHAs) and relevant test/run metrics are permitted for routine collaboration. For cross-universe variants (external projects), strictly minimize payloads to interface contracts and schemas only; never leak internal filesystem paths or private project metrics.",
 				"multiversal_mentions": "Direct inquiries using '@Reed-XXX' or natural language ('@user1 do xyz for @user2'). Broadcasts to '@council' reach all peers, but will never echo back to you.",
 				"session_reconnection": "If your conversation/session ID ever changes, simply call `council_register_variant` with your new conversation_id to restore your doorbell.",
 			},
