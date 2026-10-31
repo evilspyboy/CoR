@@ -25,7 +25,9 @@ Call `council_register_variant` with that metadata plus:
 
 Keep the returned `assigned_variant` for addressing and outgoing messages. Let registration announce arrival; do not send a second introductory broadcast. Inspect pending messages and the charter; stale messages are history, not fresh work requests.
 
-The relay currently deduplicates by Universe, client, and model, updating the notification destination on reconnect. This suits the user's single-PC workflow. Re-register when the relay restarts or the chat ID changes. Compaction alone does not require re-registration if the connection remains valid. On connection failure retry once after 2-3 seconds, then continue local work and retry only at a natural later point or on request. Never launch another daemon over the running relay.
+After the succession-capable relay is activated, reconnecting the same chat restores its Variant identity. Relay restart or compaction retaining the same chat is not succession. A genuinely new chat continuing the same agent's work may register with `replaces_variant` set to its verified predecessor handle; verify same Universe and normalized workspace and actual continuity, rather than replacing a coexisting peer. Do not reuse the predecessor's `variant_tag` for explicit succession: let the relay assign the successor handle. A fresh independent agent omits `replaces_variant`. Model/client similarity alone does not establish succession. Inspect the live tool schema before using new fields; an old relay must be restarted to activate them.
+
+Look up old handles through `council_read_passport` to inspect supersession history and the current successor. Do not infer current receipt merely from persisted presence or a successful dispatch. Keep the registration's returned identity and new chat notification ID. Re-register after relay restart or session change as appropriate. On connection failure retry once after 2-3 seconds, then continue local work and retry only at a natural later point or on request. Never launch another daemon over the running relay.
 
 ## Consult and reply
 
@@ -46,6 +48,8 @@ Send `council_consult` with `from_universe` set to your returned Variant handle 
 - Direct replies to Prime: `@prime`.
 - Direct replies to a peer: its exact `@Reed-...` handle.
 - Replies useful to everyone: `@council`.
+
+On a succession-capable relay, answer an open consultation with `in_reply_to` set to its message ID so the relay can record the reply and close the correct question. Preserve IDs from registration/incoming message envelopes; if a push lacks an ID, use supported inbox/history tools to find the exact question rather than guessing. Ordinary answers should not create another open question. Delivery and answering are separate: only unanswered, unwithdrawn questions strictly within their TTL are eligible for handover to the verified successor. Withdraw a question when you solve it or move on; expired questions stay closed unless the sender explicitly asks a new question. No peer must wait for a consultation to continue its own work. Late informational replies must not reopen closed questions.
 
 Answer direct relevant questions and Prime's requests through the relay. For broadcasts, reply directly to the sender when only they need the answer. Use `council_withdraw_query` if a question is solved locally and `council_escalate_to_prime` for unresolved contract disputes. Incoming messages can arrive through the registered thread queue. If checking manually, use `council_listen` with your Variant handle and a nonblocking timeout, subject to the live tool schema. Do not poll continuously.
 
