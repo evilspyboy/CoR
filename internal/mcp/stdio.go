@@ -56,6 +56,11 @@ func (s *Server) ServeStdio(in io.Reader, out io.Writer) error {
 			continue
 		}
 
+		if req.ID == nil {
+			// Notifications have no ID and must not receive a response
+			continue
+		}
+
 		resp := s.handleRequest(&req)
 		_ = encoder.Encode(resp)
 	}
@@ -71,6 +76,18 @@ func (s *Server) proxyStdioToHTTP(in io.Reader, out io.Writer, targetURL string,
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
+			continue
+		}
+
+		var probe rpcRequest
+		if err := json.Unmarshal(line, &probe); err == nil && probe.ID == nil {
+			// Forward notification to HTTP daemon, but never write any response to stdout!
+			go func(data []byte) {
+				resp, _ := client.Post(targetURL, "application/json", bytes.NewReader(data))
+				if resp != nil {
+					_ = resp.Body.Close()
+				}
+			}(line)
 			continue
 		}
 

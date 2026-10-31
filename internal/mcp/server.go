@@ -282,6 +282,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.ID == nil {
+		// JSON-RPC 2.0 notification: MUST NOT reply
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	resp := s.handleRequest(&req)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -289,6 +295,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRequest(req *rpcRequest) rpcResponse {
 	switch req.Method {
+	case "ping":
+		return rpcResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result:  map[string]interface{}{},
+		}
+
 	case "initialize":
 		return rpcResponse{
 			JSONRPC: "2.0",
