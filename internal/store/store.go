@@ -145,7 +145,20 @@ func (s *Store) saveLocked() error {
 	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmpFile, s.filePath)
+
+	// Try atomic rename first
+	if err := os.Rename(tmpFile, s.filePath); err != nil {
+		// On Windows, if destination exists or sandbox blocks atomic replace, retry or fallback
+		_ = os.Remove(s.filePath)
+		if err := os.Rename(tmpFile, s.filePath); err != nil {
+			// Direct write fallback
+			if err := os.WriteFile(s.filePath, data, 0644); err != nil {
+				return err
+			}
+			_ = os.Remove(tmpFile)
+		}
+	}
+	return nil
 }
 
 // UpsertVariantSession stores or updates an active variant session
