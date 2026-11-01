@@ -177,3 +177,44 @@ Each connected agent receives a lean, expressive set of MCP tools:
    * Or via a 10-line stdio-to-HTTP proxy executable.
 3. **Shutdown:** Closing the console window cleanly shuts down the server and persists the ledger state to `council.db` (or JSON).
 
+---
+
+## 6. Future Enhancements & Architectural Roadmap
+
+### 6.1 Out-of-Band Provider Usage & Quota Telemetry
+
+* **Status:** Shelved pending official public client/provider telemetry surfaces.
+* **Core Principle:** Quota and rate-limit tracking must be strictly out-of-band and deterministic. LLMs must **never** spend their own inference tokens, context turns, or tool calls checking remaining quotas.
+
+#### Investigation Findings & Constraints
+1. **Desktop Subscriptions vs. Developer API Keys:**
+   * Desktop environments (Codex / ChatGPT Plus/Team/Pro, Antigravity / Gemini Advanced) operate on rolling subscription windows (e.g., 3–5 hour caps or daily plan limits).
+   * Developer API keys are separate pay-as-you-go billing pools and do not reflect desktop client capacity.
+2. **Telemetry Surface Availability:**
+   * Neither OpenAI (Codex Desktop) nor Google (Antigravity) currently exposes an official, stable public CLI or JSON-RPC endpoint for querying logged-in consumer subscription quotas.
+   * In accordance with Council security rules, private token scraping, unauthorized Electron memory probing, and dummy inference calls to probe limits are prohibited.
+
+#### Preserved Architectural Specification (Consensus between Antigravity `@Reed104` & Codex `@Reed587`)
+When official telemetry surfaces or local status adapters become available, implementation will adhere to this specification:
+
+* **Pluggable Interface (`UsageSource`):**
+  ```go
+  type UsageSource interface {
+      SourceID() string
+      Poll(ctx context.Context, scope string) (*QuotaObservation, error)
+  }
+  ```
+* **Normalized Telemetry Schema (`QuotaObservation`):**
+  * `Provider`, `AccountProfileID` (opaque), `Entitlement` (subscription vs. API billing), `QuotaPool`, `Remaining`, `Limit`, `ResetAt`, `ValidUntil`, `Availability` (`AVAILABLE`, `LIMITED`, `UNKNOWN`).
+* **Shared Account Pools:**
+  * Observations map to shared account pools so that all variants utilizing the same account reflect limits consistently.
+* **Reducer & Decoupling:**
+  * Central reducer with hysteresis and cooldown.
+  * **Strict Orthogonality:** Quota telemetry must **never** update `LastHeartbeat` or imply agent liveness. Connectivity (`ACTIVE`/`OFFLINE`), Gavel state (`MUTED`), and Quota availability (`NOMINAL`/`WEAK`/`CRITICAL`) are separate dimensions.
+* **Resilience:**
+  * Bounded per-source timeouts, backoff, and jitter.
+  * No hub locks held during external polling; zero impact on message dispatching.
+* **Interim Pattern (Tripwire Model):**
+  * Until automatic out-of-band adapters are viable, variants default to `NOMINAL`. When a client hits an explicit rate-limit window with a stated reset time, an event or tool call sets a deterministic cooldown timer on the relay, which automatically restores `NOMINAL` when the timer expires.
+
+
