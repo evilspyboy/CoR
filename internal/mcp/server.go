@@ -512,12 +512,40 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 
 	case "council_consult":
 		from, _ := args["from_universe"].(string)
+		if from == "" {
+			if f, ok := args["sender"].(string); ok && f != "" {
+				from = f
+			} else if f, ok := args["from"].(string); ok && f != "" {
+				from = f
+			}
+		}
 		fromVar, _ := args["from_variant"].(string)
 		to, _ := args["target_universe"].(string)
+		if to == "" {
+			if t, ok := args["to"].(string); ok && t != "" {
+				to = t
+			} else if t, ok := args["target"].(string); ok && t != "" {
+				to = t
+			}
+		}
 		topic, _ := args["topic"].(string)
 		question, _ := args["question"].(string)
+		if strings.TrimSpace(question) == "" {
+			if q, ok := args["message"].(string); ok && strings.TrimSpace(q) != "" {
+				question = q
+			} else if q, ok := args["content"].(string); ok && strings.TrimSpace(q) != "" {
+				question = q
+			}
+		}
 		snippet, _ := args["context_snippet"].(string)
 		inReplyTo, _ := args["in_reply_to"].(string)
+
+		if strings.TrimSpace(question) == "" {
+			return nil, fmt.Errorf("question or message content cannot be empty")
+		}
+		if strings.TrimSpace(to) == "" {
+			return nil, fmt.Errorf("target_universe cannot be empty")
+		}
 
 		// Look up active variant handle if registered
 		variantHandle := fromVar
@@ -631,17 +659,33 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 		}
 
 		var received []*types.Message
+		seenMsgIDs := make(map[string]bool)
+		addMsg := func(m *types.Message) bool {
+			if m == nil {
+				return false
+			}
+			if m.ID != "" {
+				if seenMsgIDs[m.ID] {
+					return false
+				}
+				seenMsgIDs[m.ID] = true
+			}
+			received = append(received, m)
+			return true
+		}
+
 		timeoutChan := time.After(time.Duration(timeoutSec) * time.Second)
 
-		// Drain existing queues across all monitored channels
+		// Drain existing queues across all monitored channels (deduplicating broadcasts)
 		drainChannels := func() bool {
 			gotAny := false
 			for _, ch := range channelsToListen {
 				for {
 					select {
 					case m := <-ch:
-						received = append(received, m)
-						gotAny = true
+						if addMsg(m) {
+							gotAny = true
+						}
 					default:
 						goto nextCh
 					}

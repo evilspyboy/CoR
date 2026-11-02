@@ -29,6 +29,9 @@ func (d *Dispatcher) Notify(session *types.VariantSession, msg *types.Message) e
 	if session == nil || session.ConversationID == "" {
 		return nil // No conversation ID registered, can only poll via MCP
 	}
+	if msg == nil || strings.TrimSpace(msg.Content) == "" {
+		return nil // Do not awaken agents if message or content is empty
+	}
 
 	client := strings.ToLower(session.ClientAgent)
 	
@@ -37,12 +40,14 @@ func (d *Dispatcher) Notify(session *types.VariantSession, msg *types.Message) e
 	if msg.FromUniverse == "earth-prime" || strings.Contains(strings.ToLower(msg.FromVariant), "prime") {
 		prefix = "[Council of Reeds] Prime"
 	} else if msg.FromVariant != "" {
-		prefix = fmt.Sprintf("[Council of Reeds] @%s", msg.FromVariant)
+		prefix = fmt.Sprintf("[Council of Reeds] @%s", strings.TrimPrefix(msg.FromVariant, "@"))
+	} else if msg.FromUniverse != "" {
+		prefix = fmt.Sprintf("[Council of Reeds] @%s", strings.TrimPrefix(msg.FromUniverse, "@"))
 	} else {
-		prefix = fmt.Sprintf("[Council of Reeds] @%s", msg.FromUniverse)
+		prefix = "[Council of Reeds] @council"
 	}
 
-	summary := fmt.Sprintf("%s: %s", prefix, msg.Content)
+	summary := fmt.Sprintf("%s: %s", prefix, strings.TrimSpace(msg.Content))
 	if msg.ContextSnippet != "" {
 		summary += fmt.Sprintf(" (Context: %s)", msg.ContextSnippet)
 	}
