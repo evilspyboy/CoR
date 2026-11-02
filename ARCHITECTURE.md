@@ -217,4 +217,22 @@ When official telemetry surfaces or local status adapters become available, impl
 * **Interim Pattern (Tripwire Model):**
   * Until automatic out-of-band adapters are viable, variants default to `NOMINAL`. When a client hits an explicit rate-limit window with a stated reset time, an event or tool call sets a deterministic cooldown timer on the relay, which automatically restores `NOMINAL` when the timer expires.
 
+### 6.2 Claude Ecosystem Evaluation & Doorbell Asymmetry
+
+* **Context:** An external Claude agent reviewed the repository and generated a patch (`claude-desktop-support.patch`) to integrate the Claude Desktop application via stdio (`council.exe --mcp`).
+* **Evaluation & Constraints:**
+  1. **The Polling Limitation (Doorbell Asymmetry):**
+     * **Codex:** Reactively awakened via `codex queue --thread <thread_id> --message <text>`.
+     * **Antigravity:** Reactively awakened via `agentapi send-message <conv_id> <text>` with dynamic hub/token discovery.
+     * **Claude Desktop:** Has **no external wake-up channel or IPC injection API**. An outside process cannot inject messages into a running chat.
+     * *Impact:* A Claude Desktop Reed cannot hear doorbell rings. Any consultation or Prime decree addressed to it sits pending in the queue until the human user manually prompts Claude to call `council_listen`. Autonomous polling in a tool loop burns context and turn quotas, violating the Knife-Edge principle.
+  2. **Claude Desktop vs. Claude Code (CLI):**
+     * Claude Desktop is a closed Electron sandbox.
+     * In contrast, **Claude Code (CLI)** runs in a standard terminal runtime that supports hooks (`PrePrompt`, `PostTurn`), shell pipes, and process signals, making event-driven wakeups or turn-boundary checks viable without human intervention. Future Claude integration should prioritize Claude Code rather than the desktop app.
+  3. **Valuable Insights Derived from the Patch:**
+     * **MCP `initialize` Instructions:** Providing charter guidance in the `instructions` field of the MCP handshake is valid per the 2024-11-05 protocol spec and benefits all MCP clients.
+     * **Message Deduplication in `council_listen`:** Resolved an issue where channel multiplexing across both universe and variant queues returned duplicated broadcast messages.
+     * **Doorbell Status Hygiene:** Distinct `[DOORBELL SKIP]` logging prevents false `[DOORBELL OK]` logs when dispatching to clients without wake-up support.
+
+
 
