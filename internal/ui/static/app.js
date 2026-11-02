@@ -204,6 +204,9 @@ function renderRoster(universes, activeVariants) {
           <button class="btn-mute ${isMuted ? "is-muted" : ""}" onclick="toggleMute('${escapeHtml(handle)}', ${!isMuted}, event)">
             ${isMuted ? "Unmute" : "Mute"}
           </button>
+          <button class="btn-prune" onclick="pruneVariant('${escapeHtml(handle)}', event)">
+            Prune
+          </button>
           <span class="variant-tag">${escapeHtml(title)}</span>
         </div>
       </div>
@@ -433,6 +436,30 @@ if (btnShutdown) {
       }
     }
   });
+}
+
+async function pruneVariant(handle, event) {
+  if (event) {
+    event.stopPropagation();
+  }
+  if (!confirm(`Are you sure you want to prune @${handle} from the active chamber roster?`)) {
+    return;
+  }
+  try {
+    const res = await fetch("/api/prune", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ variant_tag: handle })
+    });
+    if (res.ok) {
+      fetchInitialState();
+    } else {
+      const errText = await res.text();
+      alert("Failed to prune variant: " + errText);
+    }
+  } catch (err) {
+    alert("Network error pruning variant: " + err);
+  }
 }
 
 connectEvents();

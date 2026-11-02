@@ -99,6 +99,17 @@ $tools = @(
                 active_only = @{ type = "boolean"; description = "If true, only returns currently connected online Variants" }
             }
         }
+    },
+    @{
+        name = "council_dismiss_variant"
+        description = "Dismiss and prune an accidental, obsolete, or ghost variant from the active chamber roster."
+        parameters = @{
+            type = "object"
+            properties = @{
+                variant_tag = @{ type = "string"; description = "Variant handle to dismiss (e.g. 'Reed259-City-gemini')" }
+            }
+            required = @("variant_tag")
+        }
     }
 )
 

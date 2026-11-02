@@ -43,8 +43,10 @@ func (d *Dispatcher) Notify(session *types.VariantSession, msg *types.Message) e
 		prefix = fmt.Sprintf("[Council of Reeds] @%s", strings.TrimPrefix(msg.FromVariant, "@"))
 	} else if msg.FromUniverse != "" {
 		prefix = fmt.Sprintf("[Council of Reeds] @%s", strings.TrimPrefix(msg.FromUniverse, "@"))
-	} else {
+	} else if msg.Type == types.MsgRuling || msg.Type == types.MsgNotice {
 		prefix = "[Council of Reeds] @council"
+	} else {
+		prefix = "[Council of Reeds] @unknown-sender"
 	}
 
 	summary := fmt.Sprintf("%s: %s", prefix, strings.TrimSpace(msg.Content))

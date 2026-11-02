@@ -234,6 +234,24 @@ header {
   color: #ffffff;
 }
 
+.btn-prune {
+  background: rgba(156, 163, 175, 0.12);
+  color: #9ca3af;
+  border: 1px solid rgba(156, 163, 175, 0.3);
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-prune:hover {
+  background: rgba(239, 68, 68, 0.3);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
 .chamber-panel {
   background: #111827;
   border: 1px solid #1f2937;

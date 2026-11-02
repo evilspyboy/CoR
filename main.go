@@ -192,6 +192,39 @@ func main() {
 		})
 	})
 
+	// API for Pruning an obsolete, duplicate, or ghost Variant by Reed Prime
+	mux.HandleFunc("/api/prune", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var payload struct {
+			VariantTag string `json:"variant_tag"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.VariantTag) == "" {
+			http.Error(w, "Invalid prune payload", http.StatusBadRequest)
+			return
+		}
+
+		if err := h.DismissVariant(payload.VariantTag); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":      "PRUNED",
+			"variant_tag": payload.VariantTag,
+		})
+	})
+
 	// API for Graceful Relay Shutdown from Watcher Lounge
 	mux.HandleFunc("/api/shutdown", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")

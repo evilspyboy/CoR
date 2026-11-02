@@ -224,27 +224,48 @@ func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Pas
 
 	// 4. Fresh variant arrival
 	if !isReconnection && session.PredecessorTag == "" {
-		if session.VariantTag == "" {
-			// Reconnect match on client + model if exists and not superseded
+		// Check if an existing variant from the SAME client agent in the SAME workspace exists
+		var priorVariant *types.VariantSession
+		if normWs != "" {
 			for _, existingSess := range h.activeVariants {
 				if existingSess != nil && existingSess.UniverseID == session.UniverseID &&
 					strings.EqualFold(existingSess.ClientAgent, session.ClientAgent) &&
-					strings.EqualFold(existingSess.ModelFamily, session.ModelFamily) &&
 					existingSess.State != types.VariantSuperseded {
-					session.VariantTag = existingSess.VariantTag
-					session.PredecessorTag = existingSess.PredecessorTag
-					session.IsMuted = existingSess.IsMuted
-					session.State = types.VariantActive
-					isReconnection = true
-					break
+					existingWs := strings.ToLower(strings.TrimRight(strings.ReplaceAll(existingSess.WorkspacePath, "/", "\\"), "\\"))
+					if existingWs == normWs {
+						priorVariant = existingSess
+						break
+					}
 				}
 			}
 		}
 
 		if session.VariantTag == "" {
-			session.VariantTag = generateReedTag(session.UniverseID, session.WorkspacePath, session.ModelFamily)
+			// If identical client, model, and workspace: treat as reconnection of existing variant
+			if priorVariant != nil && strings.EqualFold(priorVariant.ModelFamily, session.ModelFamily) {
+				session.VariantTag = priorVariant.VariantTag
+				session.PredecessorTag = priorVariant.PredecessorTag
+				session.IsMuted = priorVariant.IsMuted
+				session.State = types.VariantActive
+				isReconnection = true
+			} else if priorVariant != nil {
+				// Same client in same workspace with DIFFERENT model (or new session):
+				// Implicit succession! Automatically archive prior variant as superseded so ghost duplicates are not created.
+				session.VariantTag = generateReedTag(session.UniverseID, session.WorkspacePath, session.ModelFamily)
+				_ = h.store.ArchiveSupersededVariant(priorVariant.VariantTag, session.VariantTag, passport, now)
+				delete(h.activeVariants, priorVariant.VariantTag)
+				session.PredecessorTag = priorVariant.VariantTag
+				session.State = types.VariantActive
+				if priorVariant.IsMuted {
+					session.IsMuted = true
+				}
+			} else {
+				session.VariantTag = generateReedTag(session.UniverseID, session.WorkspacePath, session.ModelFamily)
+				session.State = types.VariantActive
+			}
+		} else {
+			session.State = types.VariantActive
 		}
-		session.State = types.VariantActive
 	}
 
 	// Prune old ghost session with same conversation_id
@@ -699,6 +720,52 @@ func (h *Hub) SetVariantMuted(target string, muted bool) error {
 		Status:       types.StatusDelivered,
 		Topic:        "Executive Mute Gavel",
 		Content:      fmt.Sprintf("Variant @%s transmitter status set to: %s by Reed Prime.", matched.VariantTag, statusStr),
+		CreatedAt:    time.Now().UTC(),
+		TTLMinutes:   60,
+	}
+	_ = h.store.AppendMessage(notice)
+	h.broadcastToWatchers(notice)
+	return nil
+}
+
+// DismissVariant removes an active variant from the chamber roster
+func (h *Hub) DismissVariant(target string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	cleaned := strings.TrimPrefix(strings.TrimSpace(target), "@")
+
+	var matchedTag string
+	for tag, sess := range h.activeVariants {
+		if sess != nil && strings.EqualFold(sess.VariantTag, cleaned) {
+			matchedTag = sess.VariantTag
+			delete(h.activeVariants, tag)
+		}
+	}
+
+	if matchedTag == "" {
+		delete(h.activeVariants, cleaned)
+		matchedTag = cleaned
+	}
+
+	// Clean up universe-level key if it points to the dismissed variant
+	for k, v := range h.activeVariants {
+		if v != nil && strings.EqualFold(v.VariantTag, matchedTag) {
+			delete(h.activeVariants, k)
+		}
+	}
+
+	_ = h.store.DeleteVariantSession(matchedTag)
+
+	notice := &types.Message{
+		ID:           "sys-" + generateID(),
+		FromUniverse: "earth-prime",
+		FromVariant:  "Prime",
+		ToUniverse:   "@council",
+		Type:         types.MsgNotice,
+		Status:       types.StatusDelivered,
+		Topic:        "Variant Dismissal",
+		Content:      fmt.Sprintf("Variant @%s has been formally dismissed from the active chamber roster by Reed Prime.", matchedTag),
 		CreatedAt:    time.Now().UTC(),
 		TTLMinutes:   60,
 	}

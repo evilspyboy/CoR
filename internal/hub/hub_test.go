@@ -204,3 +204,105 @@ func TestHub_TransitiveRoutingAndSuccessionExchange(t *testing.T) {
 		t.Fatalf("expected active variants")
 	}
 }
+
+func TestHub_ImplicitSuccessionAndDismissal(t *testing.T) {
+	h, _, tmpDir := setupTestHub(t)
+	defer os.RemoveAll(tmpDir)
+
+	p := &types.Passport{
+		UniverseID: "city-connect",
+		Summary:    "City Connect",
+	}
+
+	// 1. Initial Antigravity agent with gemini model
+	sess1 := &types.VariantSession{
+		UniverseID:    "city-connect",
+		ClientAgent:   "antigravity",
+		ModelFamily:   "gemini",
+		WorkspacePath: `C:\TCHT\CityConnect`,
+	}
+	_, _, err := h.RegisterVariant(sess1, p, "")
+	if err != nil {
+		t.Fatalf("failed to register sess1: %v", err)
+	}
+	tag1 := sess1.VariantTag
+
+	// 2. New Antigravity agent in SAME workspace with corrected/new model gemini-3.8-flash (no replaces_variant)
+	sess2 := &types.VariantSession{
+		UniverseID:    "city-connect",
+		ClientAgent:   "antigravity",
+		ModelFamily:   "gemini-3.8-flash",
+		WorkspacePath: `C:\TCHT\CityConnect`,
+	}
+	_, _, err = h.RegisterVariant(sess2, p, "")
+	if err != nil {
+		t.Fatalf("failed to register sess2: %v", err)
+	}
+	tag2 := sess2.VariantTag
+
+	// Must have implicitly succeeded tag1:
+	if tag2 == tag1 {
+		t.Fatalf("expected new tag for different model, got same %s", tag2)
+	}
+	if sess2.PredecessorTag != tag1 {
+		t.Fatalf("expected PredecessorTag %s, got %s", tag1, sess2.PredecessorTag)
+	}
+
+	// Active variants for city-connect should only be tag2 (tag1 is superseded!)
+	active := h.GetActiveVariants()
+	cityCount := 0
+	for _, v := range active {
+		if v.UniverseID == "city-connect" {
+			cityCount++
+			if v.VariantTag == tag1 {
+				t.Fatalf("old variant %s should not be active", tag1)
+			}
+		}
+	}
+	if cityCount != 1 {
+		t.Fatalf("expected exactly 1 active variant for city-connect, got %d", cityCount)
+	}
+
+	// 3. Co-located peer from DIFFERENT client (codex) in same workspace should co-exist
+	sessCodex := &types.VariantSession{
+		UniverseID:    "city-connect",
+		ClientAgent:   "codex",
+		ModelFamily:   "gpt-6",
+		WorkspacePath: `C:\TCHT\CityConnect`,
+	}
+	_, _, err = h.RegisterVariant(sessCodex, p, "")
+	if err != nil {
+		t.Fatalf("failed to register codex peer: %v", err)
+	}
+	tagCodex := sessCodex.VariantTag
+
+	// Both tag2 and tagCodex must be active
+	cityCount = 0
+	for _, v := range h.GetActiveVariants() {
+		if v.UniverseID == "city-connect" {
+			cityCount++
+		}
+	}
+	if cityCount != 2 {
+		t.Fatalf("expected 2 active co-located variants, got %d", cityCount)
+	}
+
+	// 4. Prime dismisses tagCodex
+	if err := h.DismissVariant(tagCodex); err != nil {
+		t.Fatalf("failed to dismiss variant: %v", err)
+	}
+
+	// Now only tag2 remains
+	cityCount = 0
+	for _, v := range h.GetActiveVariants() {
+		if v.UniverseID == "city-connect" {
+			cityCount++
+			if v.VariantTag == tagCodex {
+				t.Fatalf("dismissed variant %s still active", tagCodex)
+			}
+		}
+	}
+	if cityCount != 1 {
+		t.Fatalf("expected 1 active variant after dismissal, got %d", cityCount)
+	}
+}

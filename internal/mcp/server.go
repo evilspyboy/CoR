@@ -275,6 +275,20 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 				},
 			},
 		},
+		{
+			Name:        "council_dismiss_variant",
+			Description: "Dismiss and prune an accidental, obsolete, or ghost variant from the active chamber roster.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"variant_tag": map[string]interface{}{
+						"type":        "string",
+						"description": "Variant handle to dismiss (e.g. 'Reed259-City-gemini')",
+					},
+				},
+				"required": []string{"variant_tag"},
+			},
+		},
 	}
 }
 
@@ -566,6 +580,14 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 			}
 		}
 
+		// Security: strictly reject anonymous consultations or masquerading as @council
+		if strings.TrimSpace(fromUniverse) == "" && strings.TrimSpace(variantHandle) == "" {
+			return nil, fmt.Errorf("sender identity required: 'from_universe' or 'from_variant' must be provided; consultations cannot be sent anonymously")
+		}
+		if strings.EqualFold(strings.TrimPrefix(fromUniverse, "@"), "council") || strings.EqualFold(strings.TrimPrefix(variantHandle, "@"), "council") {
+			return nil, fmt.Errorf("variants cannot send consultations from '@council'; only Reed Prime rulings or chamber notices may speak for the Council")
+		}
+
 		resolvedTo := s.hub.ResolveTarget(to)
 
 		msg := &types.Message{
@@ -845,6 +867,21 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 			res["universe_count"] = len(allPassports)
 		}
 		return res, nil
+
+	case "council_dismiss_variant":
+		targetTag, _ := args["variant_tag"].(string)
+		if strings.TrimSpace(targetTag) == "" {
+			return nil, fmt.Errorf("variant_tag is required")
+		}
+		cleanTag := strings.TrimPrefix(strings.TrimSpace(targetTag), "@")
+		if err := s.hub.DismissVariant(cleanTag); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"status":      "DISMISSED",
+			"variant_tag": cleanTag,
+			"note":        fmt.Sprintf("Variant @%s has been formally dismissed and pruned from the active roster.", cleanTag),
+		}, nil
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
