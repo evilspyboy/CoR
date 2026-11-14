@@ -3,6 +3,7 @@ package hub_test
 import (
 	"os"
 	"testing"
+	"time"
 
 	"council-of-reeds/internal/hub"
 	"council-of-reeds/internal/store"
@@ -71,7 +72,7 @@ func TestHub_ReconnectionAndSuccession(t *testing.T) {
 		t.Fatalf("anti-hijack violation: mute status was stripped on reconnection!")
 	}
 
-	// 3. Validated succession: Variant B explicitly replaces ReedA
+	// 3. Validated succession: Variant B cannot hijack ReedA while ReedA has a fresh heartbeat
 	sessB := &types.VariantSession{
 		UniverseID:     "universe-alpha",
 		VariantTag:     "ReedB",
@@ -81,8 +82,15 @@ func TestHub_ReconnectionAndSuccession(t *testing.T) {
 		WorkspacePath:  `C:\TCHT\Alpha`,
 	}
 	_, _, err = h.RegisterVariant(sessB, p, "ReedA")
+	if err == nil {
+		t.Fatalf("expected hijacking rejection while ReedA has fresh heartbeat")
+	}
+
+	// Simulate ReedA going idle/stale (>5m)
+	sessAReconn.LastHeartbeat = time.Now().UTC().Add(-6 * time.Minute)
+	_, _, err = h.RegisterVariant(sessB, p, "ReedA")
 	if err != nil {
-		t.Fatalf("failed to register successor B: %v", err)
+		t.Fatalf("failed to register successor B after ReedA became stale: %v", err)
 	}
 	if sessB.PredecessorTag != "ReedA" {
 		t.Fatalf("expected predecessor ReedA, got %s", sessB.PredecessorTag)
@@ -304,5 +312,114 @@ func TestHub_ImplicitSuccessionAndDismissal(t *testing.T) {
 	}
 	if cityCount != 1 {
 		t.Fatalf("expected 1 active variant after dismissal, got %d", cityCount)
+	}
+}
+
+func TestHub_UnsupersedeOnDismissalAndOwnerReclaim(t *testing.T) {
+	h, s, tmpDir := setupTestHub(t)
+	defer os.RemoveAll(tmpDir)
+
+	p := &types.Passport{UniverseID: "opentwin", Summary: "OpenTwin"}
+
+	// 1. Register Reed908
+	sess908 := &types.VariantSession{
+		UniverseID:     "opentwin",
+		VariantTag:     "Reed908-Open-Argon",
+		ClientAgent:    "antigravity",
+		ModelFamily:    "argon",
+		ConversationID: "conv-908",
+		WorkspacePath:  `C:\TCHT\OpenTwin`,
+	}
+	if _, _, err := h.RegisterVariant(sess908, p, ""); err != nil {
+		t.Fatalf("failed to register Reed908: %v", err)
+	}
+
+	// Age Reed908 and supersede with Reed587
+	sess908.LastHeartbeat = time.Now().UTC().Add(-10 * time.Minute)
+	sess587 := &types.VariantSession{
+		UniverseID:     "opentwin",
+		VariantTag:     "Reed587-Open-gemini",
+		ClientAgent:    "antigravity",
+		ModelFamily:    "gemini",
+		ConversationID: "conv-587",
+		WorkspacePath:  `C:\TCHT\OpenTwin`,
+	}
+	if _, _, err := h.RegisterVariant(sess587, p, "Reed908-Open-Argon"); err != nil {
+		t.Fatalf("failed to supersede with Reed587: %v", err)
+	}
+
+	// 2. Dismiss Reed587 -> Reed908 must be un-superseded!
+	if err := h.DismissVariant("Reed587-Open-gemini"); err != nil {
+		t.Fatalf("failed to dismiss Reed587: %v", err)
+	}
+	hist, found := s.GetVariantSession("Reed908-Open-Argon")
+	if !found || hist.State == types.VariantSuperseded || hist.SuccessorTag != "" {
+		t.Fatalf("expected Reed908 to be un-superseded after Reed587 dismissal, got state=%v succ=%s", hist.State, hist.SuccessorTag)
+	}
+
+	// 3. Original conversation conv-908 reclaims Reed908-Open-Argon
+	sess908Reclaim := &types.VariantSession{
+		UniverseID:     "opentwin",
+		ClientAgent:    "antigravity",
+		ModelFamily:    "argon",
+		ConversationID: "conv-908",
+		WorkspacePath:  `C:\TCHT\OpenTwin`,
+	}
+	if _, _, err := h.RegisterVariant(sess908Reclaim, p, ""); err != nil {
+		t.Fatalf("failed to reclaim Reed908 by conversation_id: %v", err)
+	}
+	if sess908Reclaim.VariantTag != "Reed908-Open-Argon" {
+		t.Fatalf("expected reclaimed tag Reed908-Open-Argon, got %s", sess908Reclaim.VariantTag)
+	}
+}
+
+func TestHub_SelfRoutingExclusionAndSelfMentionFilter(t *testing.T) {
+	h, _, tmpDir := setupTestHub(t)
+	defer os.RemoveAll(tmpDir)
+
+	p := &types.Passport{UniverseID: "opentwin", Summary: "OpenTwin"}
+
+	sessCodex := &types.VariantSession{
+		UniverseID:     "opentwin",
+		VariantTag:     "Reed260-Open-gpt-6",
+		ClientAgent:    "codex",
+		ModelFamily:    "gpt-6",
+		ConversationID: "conv-codex",
+		WorkspacePath:  `C:\TCHT\OpenTwin`,
+	}
+	sessArgon := &types.VariantSession{
+		UniverseID:     "opentwin",
+		VariantTag:     "Reed492-Open-argon",
+		ClientAgent:    "antigravity",
+		ModelFamily:    "argon",
+		ConversationID: "conv-argon",
+		WorkspacePath:  `C:\TCHT\OpenTwin`,
+	}
+	_, _, _ = h.RegisterVariant(sessCodex, p, "")
+	_, _, _ = h.RegisterVariant(sessArgon, p, "")
+
+	// 1. ResolveTarget("opentwin", "Reed492-Open-argon") must resolve to Reed260-Open-gpt-6, never Reed492 itself
+	for i := 0; i < 10; i++ {
+		resolved := h.ResolveTarget("opentwin", "Reed492-Open-argon")
+		if resolved != "Reed260-Open-gpt-6" {
+			t.Fatalf("iteration %d: expected ResolveTarget to pick peer Reed260-Open-gpt-6, got %s", i, resolved)
+		}
+	}
+
+	// 2. PostMessage with a self-mention in content must not add sender to Recipients
+	msg := &types.Message{
+		FromUniverse: "opentwin",
+		FromVariant:  "Reed492-Open-argon",
+		ToUniverse:   "@Reed260-Open-gpt-6",
+		Type:         types.MsgConsultation,
+		Topic:        "Agreement",
+		Content:      "We agree (@Reed260-Open-gpt-6 + @Reed492-Open-argon).",
+	}
+	posted, err := h.PostMessage(msg)
+	if err != nil {
+		t.Fatalf("PostMessage failed: %v", err)
+	}
+	if len(posted.Recipients) != 1 || posted.Recipients[0].VariantTag != "Reed260-Open-gpt-6" {
+		t.Fatalf("expected only Reed260-Open-gpt-6 in Recipients (self-mention filtered), got %+v", posted.Recipients)
 	}
 }

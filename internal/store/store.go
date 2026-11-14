@@ -351,6 +351,41 @@ func (s *Store) DeleteVariantSession(variantTag string) error {
 	return s.saveLocked()
 }
 
+// UnsupersedePredecessors un-supersedes any variant in VariantHistory whose successor is dismissedTag.
+func (s *Store) UnsupersedePredecessors(dismissedTag string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cleaned := strings.TrimPrefix(strings.TrimSpace(dismissedTag), "@")
+	var restored []string
+
+	for tag, v := range s.state.VariantHistory {
+		if v != nil && strings.EqualFold(strings.TrimPrefix(v.SuccessorTag, "@"), cleaned) {
+			v.SuccessorTag = ""
+			v.State = types.VariantOffline
+			v.HandoverTime = nil
+			restored = append(restored, tag)
+		}
+	}
+
+	if len(restored) > 0 {
+		_ = s.saveLocked()
+	}
+	return restored
+}
+
+// GetAllHistoricalVariants returns all variants in VariantHistory
+func (s *Store) GetAllHistoricalVariants() []*types.VariantSession {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	res := make([]*types.VariantSession, 0, len(s.state.VariantHistory))
+	for _, v := range s.state.VariantHistory {
+		res = append(res, v)
+	}
+	return res
+}
+
 // GetAllVariantSessions returns all persisted active variants
 func (s *Store) GetAllVariantSessions() []*types.VariantSession {
 	s.mu.RLock()

@@ -156,7 +156,26 @@ func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Pas
 	if session.VariantTag != "" {
 		if existingSess, ok := h.store.GetVariantSession(session.VariantTag); ok {
 			if existingSess.State == types.VariantSuperseded {
-				return nil, nil, fmt.Errorf("cannot reconnect as @%s: variant is permanently SUPERSEDED by successor @%s", existingSess.VariantTag, existingSess.SuccessorTag)
+				successorActive := false
+				if existingSess.SuccessorTag != "" {
+					if succ, inActive := h.activeVariants[existingSess.SuccessorTag]; inActive && succ != nil && succ.State == types.VariantActive {
+						successorActive = true
+					}
+				}
+				if successorActive && (session.ConversationID == "" || session.ConversationID != existingSess.ConversationID) {
+					return nil, nil, fmt.Errorf("cannot reconnect as @%s: variant is permanently SUPERSEDED by active successor @%s", existingSess.VariantTag, existingSess.SuccessorTag)
+				}
+				// If successor is no longer active, or caller owns this conversation_id, un-supersede!
+				existingSess.State = types.VariantActive
+				existingSess.SuccessorTag = ""
+			}
+			// Guard active variant from being hijacked by a different conversation ID / client
+			if active, inActive := h.activeVariants[existingSess.VariantTag]; inActive && active != nil {
+				if active.ConversationID != "" && session.ConversationID != "" && active.ConversationID != session.ConversationID {
+					if now.Sub(active.LastHeartbeat) < 5*time.Minute && !strings.EqualFold(active.ClientAgent, session.ClientAgent) {
+						return nil, nil, fmt.Errorf("handle hijacking rejected: @%s is currently active with client %s (last heartbeat %s ago); cannot be claimed by %s", active.VariantTag, active.ClientAgent, time.Since(active.LastHeartbeat).Round(time.Second), session.ClientAgent)
+					}
+				}
 			}
 			session.PredecessorTag = existingSess.PredecessorTag
 			session.IsMuted = existingSess.IsMuted
@@ -170,7 +189,7 @@ func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Pas
 		for _, existingSess := range h.activeVariants {
 			if existingSess != nil && existingSess.ConversationID == session.ConversationID {
 				if existingSess.State == types.VariantSuperseded {
-					continue // Do not revive superseded session
+					continue // Do not revive superseded session if active
 				}
 				session.VariantTag = existingSess.VariantTag
 				session.PredecessorTag = existingSess.PredecessorTag
@@ -178,6 +197,28 @@ func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Pas
 				session.State = types.VariantActive
 				isReconnection = true
 				break
+			}
+		}
+		if !isReconnection {
+			for _, existingSess := range h.store.GetAllHistoricalVariants() {
+				if existingSess != nil && existingSess.ConversationID == session.ConversationID {
+					successorActive := false
+					if existingSess.SuccessorTag != "" {
+						if succ, inActive := h.activeVariants[existingSess.SuccessorTag]; inActive && succ != nil && succ.State == types.VariantActive {
+							successorActive = true
+						}
+					}
+					if !successorActive {
+						existingSess.State = types.VariantActive
+						existingSess.SuccessorTag = ""
+						session.VariantTag = existingSess.VariantTag
+						session.PredecessorTag = existingSess.PredecessorTag
+						session.IsMuted = existingSess.IsMuted
+						session.State = types.VariantActive
+						isReconnection = true
+						break
+					}
+				}
 			}
 		}
 	}
@@ -193,6 +234,12 @@ func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Pas
 		predWs := strings.ToLower(strings.TrimRight(strings.ReplaceAll(pred.WorkspacePath, "/", "\\"), "\\"))
 		if !strings.EqualFold(pred.UniverseID, session.UniverseID) || (normWs != "" && predWs != "" && normWs != predWs) {
 			return nil, nil, fmt.Errorf("unauthorized succession: predecessor @%s belongs to universe '%s' (%s), cannot succeed from universe '%s' (%s)", predTag, pred.UniverseID, predWs, session.UniverseID, normWs)
+		}
+
+		// Prevent unauthorized predecessor hijacking:
+		// If predecessor is active with a fresh heartbeat (<5m ago) under a different conversation_id, reject replacement.
+		if pred.State == types.VariantActive && now.Sub(pred.LastHeartbeat) < 5*time.Minute && pred.ConversationID != "" && session.ConversationID != "" && pred.ConversationID != session.ConversationID {
+			return nil, nil, fmt.Errorf("predecessor hijacking rejected: @%s is actively running (heartbeat %s ago) under another conversation; wait until it goes idle (>5m) or omit replaces_variant to coexist", predTag, time.Since(pred.LastHeartbeat).Round(time.Second))
 		}
 
 		// Mint tag if not provided
@@ -391,8 +438,9 @@ func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Pas
 	return passport, pending, nil
 }
 
-// ResolveTarget finds the matching universe ID or variant tag for an @mention or universe ID
-func (h *Hub) ResolveTarget(target string) string {
+// ResolveTarget finds the matching universe ID or variant tag for an @mention or universe ID,
+// preferring peer variants over excludeVariant when multiple active variants exist.
+func (h *Hub) ResolveTarget(target string, excludeVariant string) string {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -401,6 +449,8 @@ func (h *Hub) ResolveTarget(target string) string {
 		return "@council"
 	}
 
+	excludeClean := strings.TrimPrefix(strings.TrimSpace(excludeVariant), "@")
+
 	// 1. Match active variant tag (e.g. Reed472-CoR-geminiflash3.8)
 	for _, sess := range h.activeVariants {
 		if sess != nil && strings.EqualFold(sess.VariantTag, cleaned) {
@@ -408,14 +458,24 @@ func (h *Hub) ResolveTarget(target string) string {
 		}
 	}
 
-	// 2. Match active universe ID
+	// 2. Match active universe ID (prefer peer variant that is NOT excludeVariant)
 	for _, sess := range h.activeVariants {
 		if sess != nil && strings.EqualFold(sess.UniverseID, cleaned) {
-			return sess.UniverseID
+			if excludeClean != "" && strings.EqualFold(sess.VariantTag, excludeClean) {
+				continue
+			}
+			return sess.VariantTag
 		}
 	}
 
-	// 3. Match stored universe ID
+	// 3. Fallback: match universe ID even if it resolves to excludeVariant
+	for _, sess := range h.activeVariants {
+		if sess != nil && strings.EqualFold(sess.UniverseID, cleaned) {
+			return sess.VariantTag
+		}
+	}
+
+	// 4. Match stored universe ID
 	if _, found := h.store.GetPassport(cleaned); found {
 		return cleaned
 	}
@@ -569,7 +629,15 @@ func (h *Hub) PostMessage(msg *types.Message) (*types.Message, error) {
 					if sess == nil || sess.VariantTag == "" {
 						continue
 					}
-					if strings.EqualFold(sess.VariantTag, targetClean) || strings.EqualFold(sess.UniverseID, targetClean) {
+					if strings.EqualFold(sess.VariantTag, targetClean) {
+						resolvedTag = sess.VariantTag
+						resolvedSession = sess
+						break
+					} else if strings.EqualFold(sess.UniverseID, targetClean) {
+						// Skip sender's own variant so we prefer the peer variant in that universe!
+						if msg.FromVariant != "" && strings.EqualFold(sess.VariantTag, msg.FromVariant) {
+							continue
+						}
 						resolvedTag = sess.VariantTag
 						resolvedSession = sess
 						break
@@ -578,11 +646,20 @@ func (h *Hub) PostMessage(msg *types.Message) (*types.Message, error) {
 			}
 
 			if resolvedSession != nil {
+				// Never route or deliver a message back to the sender itself (e.g. from self-mentions in content)
+				if msg.FromVariant != "" && strings.EqualFold(resolvedSession.VariantTag, msg.FromVariant) {
+					msg.SelfMentionSkipped = true
+					continue
+				}
 				recipients = append(recipients, types.Recipient{
 					UniverseID: resolvedSession.UniverseID,
 					VariantTag: resolvedSession.VariantTag,
 				})
 			} else {
+				if msg.FromVariant != "" && strings.EqualFold(targetClean, msg.FromVariant) {
+					msg.SelfMentionSkipped = true
+					continue
+				}
 				recipients = append(recipients, types.Recipient{
 					UniverseID: targetClean,
 				})
@@ -622,6 +699,10 @@ func (h *Hub) PostMessage(msg *types.Message) (*types.Message, error) {
 			}
 
 			formattedTargets = append(formattedTargets, "@"+resolvedTag)
+		}
+
+		if len(recipients) == 0 {
+			return nil, fmt.Errorf("self-routing rejected: cannot send message solely to sender (@%s)", msg.FromVariant)
 		}
 
 		msg.Recipients = recipients
@@ -728,7 +809,7 @@ func (h *Hub) SetVariantMuted(target string, muted bool) error {
 	return nil
 }
 
-// DismissVariant removes an active variant from the chamber roster
+// DismissVariant removes an active variant from the chamber roster and un-supersedes any predecessors
 func (h *Hub) DismissVariant(target string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -756,6 +837,12 @@ func (h *Hub) DismissVariant(target string) error {
 	}
 
 	_ = h.store.DeleteVariantSession(matchedTag)
+	unSuperseded := h.store.UnsupersedePredecessors(matchedTag)
+
+	noticeContent := fmt.Sprintf("Variant @%s has been formally dismissed from the active chamber roster by Reed Prime.", matchedTag)
+	if len(unSuperseded) > 0 {
+		noticeContent += fmt.Sprintf(" Predecessors un-superseded and eligible for reconnection: @%s.", strings.Join(unSuperseded, ", @"))
+	}
 
 	notice := &types.Message{
 		ID:           "sys-" + generateID(),
@@ -765,7 +852,7 @@ func (h *Hub) DismissVariant(target string) error {
 		Type:         types.MsgNotice,
 		Status:       types.StatusDelivered,
 		Topic:        "Variant Dismissal",
-		Content:      fmt.Sprintf("Variant @%s has been formally dismissed from the active chamber roster by Reed Prime.", matchedTag),
+		Content:      noticeContent,
 		CreatedAt:    time.Now().UTC(),
 		TTLMinutes:   60,
 	}

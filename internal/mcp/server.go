@@ -24,6 +24,11 @@ func NewServer(h *hub.Hub, s *store.Store) *Server {
 	return &Server{hub: h, store: s}
 }
 
+// ExecuteToolForTest exposes executeTool for unit testing
+func (s *Server) ExecuteToolForTest(name string, args map[string]interface{}) (interface{}, error) {
+	return s.executeTool(name, args)
+}
+
 // NormalizeWorkspacePath cleans and normalizes a Windows or POSIX path for comparison
 func NormalizeWorkspacePath(p string) string {
 	if p == "" {
@@ -163,6 +168,10 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 						"type":        "string",
 						"description": "Target universe ID, @variant handle, or '@council' for broadcast. Verify locality via council_read_passport first.",
 					},
+					"target_variant": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional direct target variant handle (e.g. '@Reed260-Open-gpt-6'). If provided, routes directly to this variant rather than resolving universe.",
+					},
 					"topic": map[string]interface{}{
 						"type":        "string",
 						"description": "Subject or interface in question",
@@ -277,7 +286,7 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "council_dismiss_variant",
-			Description: "Dismiss and prune an accidental, obsolete, or ghost variant from the active chamber roster.",
+			Description: "Dismiss and prune an accidental, obsolete, or ghost variant from the active chamber roster. Over MCP, caller authorization is enforced: variants may only dismiss themselves or a co-located peer in the same workspace; Reed Prime may dismiss any variant via the Watcher Lounge.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -285,8 +294,12 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 						"type":        "string",
 						"description": "Variant handle to dismiss (e.g. 'Reed259-City-gemini')",
 					},
+					"caller_variant": map[string]interface{}{
+						"type":        "string",
+						"description": "Variant handle of the caller requesting dismissal (e.g. 'Reed104-COR-gemini-3.8-flash'). Required over MCP for caller authorization.",
+					},
 				},
-				"required": []string{"variant_tag"},
+				"required": []string{"variant_tag", "caller_variant"},
 			},
 		},
 	}
@@ -534,8 +547,11 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 			}
 		}
 		fromVar, _ := args["from_variant"].(string)
+		targetVar, _ := args["target_variant"].(string)
 		to, _ := args["target_universe"].(string)
-		if to == "" {
+		if strings.TrimSpace(targetVar) != "" {
+			to = targetVar
+		} else if to == "" {
 			if t, ok := args["to"].(string); ok && t != "" {
 				to = t
 			} else if t, ok := args["target"].(string); ok && t != "" {
@@ -588,7 +604,15 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 			return nil, fmt.Errorf("variants cannot send consultations from '@council'; only Reed Prime rulings or chamber notices may speak for the Council")
 		}
 
-		resolvedTo := s.hub.ResolveTarget(to)
+		resolvedTo := s.hub.ResolveTarget(to, variantHandle)
+
+		cleanTo := strings.TrimPrefix(strings.TrimSpace(to), "@")
+		cleanResolved := strings.TrimPrefix(strings.TrimSpace(resolvedTo), "@")
+		cleanSender := strings.TrimPrefix(strings.TrimSpace(variantHandle), "@")
+
+		if strings.EqualFold(cleanTo, cleanSender) || (cleanResolved != "council" && strings.EqualFold(cleanResolved, cleanSender)) {
+			return nil, fmt.Errorf("self-routing rejected: target '%s' resolves to your own variant handle (@%s). To broadcast to all universes, use target_universe: '@council'", to, cleanSender)
+		}
 
 		msg := &types.Message{
 			FromUniverse:   fromUniverse,
@@ -618,6 +642,9 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 		}
 		if posted.ActualRecipient != "" {
 			res["actual_recipient"] = posted.ActualRecipient
+		}
+		if posted.SelfMentionSkipped {
+			res["warning"] = fmt.Sprintf("You also targeted or mentioned your own handle (@%s); self-delivery was skipped so only your peer(s) received the message.", cleanSender)
 		}
 		if inReplyTo != "" {
 			res["in_reply_to"] = inReplyTo
@@ -874,6 +901,36 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 			return nil, fmt.Errorf("variant_tag is required")
 		}
 		cleanTag := strings.TrimPrefix(strings.TrimSpace(targetTag), "@")
+
+		callerTag, _ := args["caller_variant"].(string)
+		if callerTag == "" {
+			callerTag, _ = args["from_variant"].(string)
+		}
+		cleanCaller := strings.TrimPrefix(strings.TrimSpace(callerTag), "@")
+
+		if cleanCaller == "" {
+			return nil, fmt.Errorf("authorization required: 'caller_variant' (or 'from_variant') must be provided over MCP. Foreign variants cannot arbitrarily dismiss peers; use the Watcher Lounge web UI to prune as Reed Prime")
+		}
+
+		// Self-dismissal is always authorized
+		if !strings.EqualFold(cleanCaller, cleanTag) {
+			// Caller is trying to dismiss someone else: verify same universe and same workspace
+			callerSess, foundCaller := s.store.GetVariantSession(cleanCaller)
+			targetSess, foundTarget := s.store.GetVariantSession(cleanTag)
+
+			if !foundCaller {
+				return nil, fmt.Errorf("caller variant @%s not found in council ledger", cleanCaller)
+			}
+			if foundTarget {
+				callerWs := NormalizeWorkspacePath(callerSess.WorkspacePath)
+				targetWs := NormalizeWorkspacePath(targetSess.WorkspacePath)
+
+				if !strings.EqualFold(callerSess.UniverseID, targetSess.UniverseID) || (callerWs != "" && targetWs != "" && callerWs != targetWs) {
+					return nil, fmt.Errorf("unauthorized dismissal: variant @%s (universe '%s') cannot dismiss variant @%s (universe '%s'). Only Reed Prime via the Watcher Lounge or a co-located peer in the same workspace can dismiss variants", cleanCaller, callerSess.UniverseID, cleanTag, targetSess.UniverseID)
+				}
+			}
+		}
+
 		if err := s.hub.DismissVariant(cleanTag); err != nil {
 			return nil, err
 		}

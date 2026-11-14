@@ -131,5 +131,6 @@ type Message struct {
 	AnsweredAt          *time.Time    `json:"answered_at,omitempty"`
 	CreatedAt           time.Time     `json:"created_at"`
 	TTLMinutes          int           `json:"ttl_minutes"`
+	SelfMentionSkipped  bool          `json:"-"`
 }
 
