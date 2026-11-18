@@ -423,3 +423,55 @@ func TestHub_SelfRoutingExclusionAndSelfMentionFilter(t *testing.T) {
 		t.Fatalf("expected only Reed260-Open-gpt-6 in Recipients (self-mention filtered), got %+v", posted.Recipients)
 	}
 }
+
+func TestHub_MultiVariantUniverseAndMentionFanout(t *testing.T) {
+	h, _, tmpDir := setupTestHub(t)
+	defer os.RemoveAll(tmpDir)
+
+	p := &types.Passport{UniverseID: "opentwin", Summary: "OpenTwin"}
+	_, _, _ = h.RegisterVariant(&types.VariantSession{
+		UniverseID:    "opentwin",
+		VariantTag:    "Reed260-Open-gpt-6",
+		ClientAgent:   "codex",
+		WorkspacePath: `C:\TCHT\OpenTwin`,
+	}, p, "")
+	_, _, _ = h.RegisterVariant(&types.VariantSession{
+		UniverseID:    "opentwin",
+		VariantTag:    "Reed492-Open-argon",
+		ClientAgent:   "antigravity",
+		WorkspacePath: `C:\TCHT\OpenTwin`,
+	}, p, "")
+
+	// 1. Prime decree targeting universe "opentwin" must reach BOTH variants
+	decreeUniv := &types.Message{
+		FromUniverse: "earth-prime",
+		FromVariant:  "Prime",
+		ToUniverse:   "opentwin",
+		Type:         types.MsgRuling,
+		Topic:        "Executive Decree",
+		Content:      "Status check for both OpenTwin Reeds.",
+	}
+	postedUniv, err := h.PostMessage(decreeUniv)
+	if err != nil {
+		t.Fatalf("PostMessage to universe failed: %v", err)
+	}
+	if len(postedUniv.Recipients) != 2 {
+		t.Fatalf("expected 2 recipients when Prime targets opentwin, got %d: %+v", len(postedUniv.Recipients), postedUniv.Recipients)
+	}
+
+	// 2. Prime decree with duplicate + multiple @mentions must deduplicate and include both
+	decreeMentions := &types.Message{
+		FromUniverse: "earth-prime",
+		FromVariant:  "Prime",
+		Type:         types.MsgRuling,
+		Topic:        "Executive Decree",
+		Content:      "@Reed260-Open-gpt-6 @Reed260-Open-gpt-6 @Reed492-Open-argon please sync.",
+	}
+	postedMentions, err := h.PostMessage(decreeMentions)
+	if err != nil {
+		t.Fatalf("PostMessage with multiple mentions failed: %v", err)
+	}
+	if len(postedMentions.Recipients) != 2 {
+		t.Fatalf("expected 2 deduplicated recipients, got %d: %+v", len(postedMentions.Recipients), postedMentions.Recipients)
+	}
+}

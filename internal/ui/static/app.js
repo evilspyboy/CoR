@@ -192,7 +192,7 @@ function renderRoster(universes, activeVariants) {
     card.className = `universe-card ${isMuted ? "is-muted" : ""}`;
     card.style.cursor = "pointer";
     card.style.borderLeftColor = theme.border;
-    card.title = `Click to direct-message @${handle}`;
+    card.title = `Click to add @${handle} to your message`;
     card.onclick = () => {
       insertMention(handle);
     };
@@ -242,14 +242,19 @@ function renderRoster(universes, activeVariants) {
 }
 
 function insertMention(handle) {
-  const current = gavelInput.value.trim();
-  if (current.startsWith("@")) {
-    // Replace existing mention
-    const parts = current.split(" ");
-    parts[0] = `@${handle}`;
-    gavelInput.value = parts.join(" ") + " ";
+  const mention = `@${handle}`;
+  const current = gavelInput.value;
+  const escaped = mention.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const existingRe = new RegExp(`(^|\\s)${escaped}(?=\\s|$)`, "i");
+  if (existingRe.test(current)) {
+    gavelInput.focus();
+    closeAutocomplete();
+    return;
+  }
+  if (current.length === 0 || current.endsWith(" ") || current.endsWith("\n")) {
+    gavelInput.value = `${current}${mention} `;
   } else {
-    gavelInput.value = `@${handle} ${current}`;
+    gavelInput.value = `${current} ${mention} `;
   }
   gavelInput.focus();
   closeAutocomplete();
@@ -273,6 +278,21 @@ gavelInput.addEventListener("input", () => {
         power_tier: "ALL"
       });
     }
+    const universeCounts = {};
+    currentActiveVariants.forEach(v => {
+      if (v.universe_id) {
+        universeCounts[v.universe_id] = (universeCounts[v.universe_id] || 0) + 1;
+      }
+    });
+    Object.keys(universeCounts).forEach(uid => {
+      if (universeCounts[uid] > 1 && uid.toLowerCase().includes(query)) {
+        autocompleteMatches.push({
+          variant_tag: uid,
+          universe_id: `All ${universeCounts[uid]} active variants`,
+          power_tier: "UNIVERSE"
+        });
+      }
+    });
     currentActiveVariants.forEach(v => {
       if ((v.variant_tag && v.variant_tag.toLowerCase().includes(query)) || 
           (v.universe_id && v.universe_id.toLowerCase().includes(query)) ||

@@ -607,98 +607,132 @@ func (h *Hub) PostMessage(msg *types.Message) (*types.Message, error) {
 		// Targeted dispatch with transitive succession resolution
 		var formattedTargets []string
 		notified := make(map[string]bool)
+		addedRecipients := make(map[string]bool)
 		var recipients []types.Recipient
+		anyDelivered := false
 
 		for _, rawTarget := range targets {
 			targetClean := strings.TrimPrefix(rawTarget, "@")
-			resolvedTag := targetClean
-			var resolvedSession *types.VariantSession
+			var matchedSessions []*types.VariantSession
 
 			// 1. Check if target is a known variant and follow transitive succession
 			leaf, _, err := h.store.GetTransitiveSuccessor(targetClean)
 			if err == nil && leaf != nil {
-				resolvedTag = leaf.VariantTag
-				resolvedSession = leaf
+				matchedSessions = append(matchedSessions, leaf)
 				if leaf.VariantTag != targetClean {
 					msg.OriginalTarget = "@" + targetClean
 					msg.ActualRecipient = "@" + leaf.VariantTag
 				}
 			} else {
-				// Match active variants by UniverseID or VariantTag
+				// 2. Check if target matches an active VariantTag directly
 				for _, sess := range h.activeVariants {
-					if sess == nil || sess.VariantTag == "" {
-						continue
-					}
-					if strings.EqualFold(sess.VariantTag, targetClean) {
-						resolvedTag = sess.VariantTag
-						resolvedSession = sess
+					if sess != nil && sess.VariantTag != "" && strings.EqualFold(sess.VariantTag, targetClean) {
+						matchedSessions = append(matchedSessions, sess)
 						break
-					} else if strings.EqualFold(sess.UniverseID, targetClean) {
-						// Skip sender's own variant so we prefer the peer variant in that universe!
-						if msg.FromVariant != "" && strings.EqualFold(sess.VariantTag, msg.FromVariant) {
+					}
+				}
+				// 3. Otherwise match ALL active variants in that UniverseID (excluding sender)
+				if len(matchedSessions) == 0 {
+					seenSess := make(map[string]bool)
+					for _, sess := range h.activeVariants {
+						if sess == nil || sess.VariantTag == "" || seenSess[strings.ToLower(sess.VariantTag)] {
 							continue
 						}
-						resolvedTag = sess.VariantTag
-						resolvedSession = sess
-						break
+						if strings.EqualFold(sess.UniverseID, targetClean) {
+							seenSess[strings.ToLower(sess.VariantTag)] = true
+							if msg.FromVariant != "" && strings.EqualFold(sess.VariantTag, msg.FromVariant) {
+								msg.SelfMentionSkipped = true
+								continue
+							}
+							matchedSessions = append(matchedSessions, sess)
+						}
 					}
 				}
 			}
 
-			if resolvedSession != nil {
+			if len(matchedSessions) == 0 {
+				if msg.FromVariant != "" && strings.EqualFold(targetClean, msg.FromVariant) {
+					msg.SelfMentionSkipped = true
+					continue
+				}
+				key := "u:" + strings.ToLower(targetClean)
+				if !addedRecipients[key] {
+					addedRecipients[key] = true
+					recipients = append(recipients, types.Recipient{
+						UniverseID: targetClean,
+					})
+					formattedTargets = append(formattedTargets, "@"+targetClean)
+				}
+				if ch, ok := h.listeners[targetClean]; ok {
+					select {
+					case ch <- msg:
+						anyDelivered = true
+					default:
+					}
+				}
+				continue
+			}
+
+			// Deliver to universe-level listener channel if targetClean differs from variant tag
+			if ch, ok := h.listeners[targetClean]; ok {
+				isVariantTag := false
+				for _, s := range matchedSessions {
+					if strings.EqualFold(s.VariantTag, targetClean) {
+						isVariantTag = true
+						break
+					}
+				}
+				if !isVariantTag {
+					select {
+					case ch <- msg:
+						anyDelivered = true
+					default:
+					}
+				}
+			}
+
+			for _, resolvedSession := range matchedSessions {
 				// Never route or deliver a message back to the sender itself (e.g. from self-mentions in content)
 				if msg.FromVariant != "" && strings.EqualFold(resolvedSession.VariantTag, msg.FromVariant) {
 					msg.SelfMentionSkipped = true
 					continue
 				}
-				recipients = append(recipients, types.Recipient{
-					UniverseID: resolvedSession.UniverseID,
-					VariantTag: resolvedSession.VariantTag,
-				})
-			} else {
-				if msg.FromVariant != "" && strings.EqualFold(targetClean, msg.FromVariant) {
-					msg.SelfMentionSkipped = true
-					continue
-				}
-				recipients = append(recipients, types.Recipient{
-					UniverseID: targetClean,
-				})
-			}
 
-			if resolvedSession != nil && resolvedSession.VariantTag != msg.FromVariant && !notified[resolvedSession.VariantTag] {
-				notified[resolvedSession.VariantTag] = true
-				go func(s *types.VariantSession, m *types.Message) {
-					if err := h.dispatcher.Notify(s, m); err != nil {
-						fmt.Printf("[DOORBELL ERROR] Direct wakeup failed for @%s: %v\n", s.VariantTag, err)
-					} else {
-						fmt.Printf("[DOORBELL OK] Awakened @%s directly\n", s.VariantTag)
+				key := "v:" + strings.ToLower(resolvedSession.VariantTag)
+				if !addedRecipients[key] {
+					addedRecipients[key] = true
+					recipients = append(recipients, types.Recipient{
+						UniverseID: resolvedSession.UniverseID,
+						VariantTag: resolvedSession.VariantTag,
+					})
+					formattedTargets = append(formattedTargets, "@"+resolvedSession.VariantTag)
+				}
+
+				if !notified[resolvedSession.VariantTag] {
+					notified[resolvedSession.VariantTag] = true
+					go func(s *types.VariantSession, m *types.Message) {
+						if err := h.dispatcher.Notify(s, m); err != nil {
+							fmt.Printf("[DOORBELL ERROR] Direct wakeup failed for @%s: %v\n", s.VariantTag, err)
+						} else {
+							fmt.Printf("[DOORBELL OK] Awakened @%s directly\n", s.VariantTag)
+						}
+					}(resolvedSession, msg)
+				}
+
+				if ch, ok := h.listeners[resolvedSession.VariantTag]; ok {
+					select {
+					case ch <- msg:
+						anyDelivered = true
+					default:
 					}
-				}(resolvedSession, msg)
-			}
-
-			// Deliver to listener channels
-			delivered := false
-			if ch, ok := h.listeners[targetClean]; ok {
-				select {
-				case ch <- msg:
-					delivered = true
-				default:
 				}
 			}
-			if ch, ok := h.listeners[resolvedTag]; ok && resolvedTag != targetClean {
-				select {
-				case ch <- msg:
-					delivered = true
-				default:
-				}
-			}
-			if delivered {
-				msg.Status = types.StatusDelivered
-			} else {
-				msg.Status = types.StatusPending
-			}
+		}
 
-			formattedTargets = append(formattedTargets, "@"+resolvedTag)
+		if anyDelivered {
+			msg.Status = types.StatusDelivered
+		} else {
+			msg.Status = types.StatusPending
 		}
 
 		if len(recipients) == 0 {
