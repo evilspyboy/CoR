@@ -35,16 +35,25 @@ func NewHub(s *store.Store) *Hub {
 		webWatchers:    make(map[string]chan *types.Message),
 	}
 
-	// Restore active variants from persistent ledger
+	// Restore active variants from persistent ledger and seed open questions into listener queues
+	now := time.Now().UTC()
 	for _, v := range s.GetAllVariantSessions() {
 		if v != nil && v.VariantTag != "" {
 			h.activeVariants[v.VariantTag] = v
-			h.listeners[v.VariantTag] = make(chan *types.Message, 50)
+			ch := make(chan *types.Message, 50)
+			h.listeners[v.VariantTag] = ch
 			if _, ok := h.activeVariants[v.UniverseID]; !ok {
 				h.activeVariants[v.UniverseID] = v
 			}
 			if _, ok := h.listeners[v.UniverseID]; !ok {
 				h.listeners[v.UniverseID] = make(chan *types.Message, 50)
+			}
+			predLineage, _ := s.GetPredecessorLineage(v.VariantTag)
+			for _, pendingMsg := range s.GetOpenQuestionsForVariant(v.UniverseID, v.VariantTag, predLineage, now) {
+				select {
+				case ch <- pendingMsg:
+				default:
+				}
 			}
 		}
 	}
@@ -414,13 +423,7 @@ func (h *Hub) RegisterVariant(session *types.VariantSession, passport *types.Pas
 		}
 		seenVariants[s.VariantTag] = true
 		if s.VariantTag != session.VariantTag {
-			go func(dest *types.VariantSession, m *types.Message) {
-				if err := h.dispatcher.Notify(dest, m); err != nil {
-					fmt.Printf("[DOORBELL ERROR] Wakeup failed for @%s: %v\n", dest.VariantTag, err)
-				} else {
-					fmt.Printf("[DOORBELL OK] Awakened @%s with message\n", dest.VariantTag)
-				}
-			}(s, notice)
+			go h.notifyWithRetry(s, notice, "with message")
 		}
 	}
 
@@ -585,13 +588,7 @@ func (h *Hub) PostMessage(msg *types.Message) (*types.Message, error) {
 			}
 			seen[sess.VariantTag] = true
 			if sess.VariantTag != msg.FromVariant {
-				go func(s *types.VariantSession, m *types.Message) {
-					if err := h.dispatcher.Notify(s, m); err != nil {
-						fmt.Printf("[DOORBELL ERROR] Broadcast wakeup failed for @%s: %v\n", s.VariantTag, err)
-					} else {
-						fmt.Printf("[DOORBELL OK] Awakened @%s via broadcast\n", s.VariantTag)
-					}
-				}(sess, msg)
+				go h.notifyWithRetry(sess, msg, "via broadcast")
 			}
 		}
 
@@ -710,13 +707,7 @@ func (h *Hub) PostMessage(msg *types.Message) (*types.Message, error) {
 
 				if !notified[resolvedSession.VariantTag] {
 					notified[resolvedSession.VariantTag] = true
-					go func(s *types.VariantSession, m *types.Message) {
-						if err := h.dispatcher.Notify(s, m); err != nil {
-							fmt.Printf("[DOORBELL ERROR] Direct wakeup failed for @%s: %v\n", s.VariantTag, err)
-						} else {
-							fmt.Printf("[DOORBELL OK] Awakened @%s directly\n", s.VariantTag)
-						}
-					}(resolvedSession, msg)
+					go h.notifyWithRetry(resolvedSession, msg, "directly")
 				}
 
 				if ch, ok := h.listeners[resolvedSession.VariantTag]; ok {
@@ -964,5 +955,51 @@ func (h *Hub) checkStaleness() {
 	defer h.mu.Unlock()
 
 	_ = h.store.SweepExpiredQuestions(time.Now().UTC())
+}
+
+// notifyWithRetry attempts proactive doorbell delivery with backoff for transient IPC/turn-busy failures
+// and surfaces persistent delivery failures to the Watcher Lounge.
+func (h *Hub) notifyWithRetry(dest *types.VariantSession, m *types.Message, mode string) {
+	if dest == nil || m == nil {
+		return
+	}
+	backoffs := []time.Duration{0, 2 * time.Second, 5 * time.Second}
+	var lastErr error
+	for attempt, wait := range backoffs {
+		if wait > 0 {
+			time.Sleep(wait)
+			h.mu.RLock()
+			_, stillActive := h.activeVariants[dest.VariantTag]
+			h.mu.RUnlock()
+			if !stillActive {
+				return
+			}
+		}
+		err := h.dispatcher.Notify(dest, m)
+		if err == nil {
+			fmt.Printf("[DOORBELL OK] Awakened @%s %s\n", dest.VariantTag, mode)
+			return
+		}
+		lastErr = err
+		if strings.Contains(err.Error(), "executable not found") {
+			break // Permanent environment issue; don't sleep-retry
+		}
+		fmt.Printf("[DOORBELL RETRY %d] Wakeup failed for @%s: %v\n", attempt+1, dest.VariantTag, err)
+	}
+
+	fmt.Printf("[DOORBELL ERROR] Wakeup failed for @%s after retries: %v\n", dest.VariantTag, lastErr)
+	h.mu.RLock()
+	h.broadcastToWatchers(&types.Message{
+		ID:           "sys-" + generateID(),
+		FromUniverse: "council-chamber",
+		FromVariant:  "Doorbell",
+		ToUniverse:   "@prime",
+		Type:         types.MsgNotice,
+		Status:       types.StatusDelivered,
+		Topic:        "Doorbell Delivery Warning",
+		Content:      fmt.Sprintf("Proactive wakeup for @%s (%s) failed after retries; message %s remains queued for council_listen. Error: %v", dest.VariantTag, dest.ClientAgent, m.ID, lastErr),
+		CreatedAt:    time.Now().UTC(),
+	})
+	h.mu.RUnlock()
 }
 

@@ -49,7 +49,11 @@ func (d *Dispatcher) Notify(session *types.VariantSession, msg *types.Message) e
 		prefix = "[Council of Reeds] @unknown-sender"
 	}
 
-	summary := fmt.Sprintf("%s: %s", prefix, strings.TrimSpace(msg.Content))
+	idTag := ""
+	if msg.ID != "" {
+		idTag = fmt.Sprintf(" [%s]", msg.ID)
+	}
+	summary := fmt.Sprintf("%s%s: %s", prefix, idTag, strings.TrimSpace(msg.Content))
 	if msg.ContextSnippet != "" {
 		summary += fmt.Sprintf(" (Context: %s)", msg.ContextSnippet)
 	}

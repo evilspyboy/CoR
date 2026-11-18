@@ -475,3 +475,50 @@ func TestHub_MultiVariantUniverseAndMentionFanout(t *testing.T) {
 		t.Fatalf("expected 2 deduplicated recipients, got %d: %+v", len(postedMentions.Recipients), postedMentions.Recipients)
 	}
 }
+
+func TestHub_SeedsOpenQuestionsOnRestart(t *testing.T) {
+	h1, s, tmpDir := setupTestHub(t)
+	defer os.RemoveAll(tmpDir)
+
+	pDP := &types.Passport{UniverseID: "desk-pal", Summary: "Desk Pal"}
+	pBmcb := &types.Passport{UniverseID: "bmcbf", Summary: "BMCBF"}
+	_, _, _ = h1.RegisterVariant(&types.VariantSession{
+		UniverseID:    "desk-pal",
+		VariantTag:    "Reed971-DP-gemini-pro",
+		ClientAgent:   "antigravity",
+		WorkspacePath: `C:\TCHT\desk-pal`,
+	}, pDP, "")
+	_, _, _ = h1.RegisterVariant(&types.VariantSession{
+		UniverseID:    "bmcbf",
+		VariantTag:    "Reed205-Bmcb-hydrogen",
+		ClientAgent:   "antigravity",
+		WorkspacePath: `C:\TCHT\bmcbf`,
+	}, pBmcb, "")
+
+	posted, err := h1.PostMessage(&types.Message{
+		FromUniverse: "desk-pal",
+		FromVariant:  "Reed971-DP-gemini-pro",
+		ToUniverse:   "@Reed205-Bmcb-hydrogen",
+		Type:         types.MsgConsultation,
+		Topic:        "Follow-up",
+		Content:      "Question before restart",
+	})
+	if err != nil {
+		t.Fatalf("PostMessage failed: %v", err)
+	}
+
+	// Simulate daemon restart by creating a new Hub over the same Store
+	h2 := hub.NewHub(s)
+	ch, err := h2.ListenChannel("Reed205-Bmcb-hydrogen")
+	if err != nil {
+		t.Fatalf("ListenChannel failed: %v", err)
+	}
+	select {
+	case m := <-ch:
+		if m.ID != posted.ID {
+			t.Fatalf("expected seeded open question %s, got %s", posted.ID, m.ID)
+		}
+	default:
+		t.Fatalf("expected open question %s to be seeded into listener channel after restart", posted.ID)
+	}
+}
