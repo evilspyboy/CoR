@@ -542,13 +542,16 @@ func (h *Hub) PostMessage(msg *types.Message) (*types.Message, error) {
 
 	now := time.Now().UTC()
 
-	// Check if sender is muted by Reed Prime
+	// Check if sender is muted by Reed Prime and refresh its LastHeartbeat
 	if msg.FromVariant != "" && msg.FromVariant != "Prime" && msg.FromUniverse != "earth-prime" {
 		for _, sess := range h.activeVariants {
 			if sess != nil && strings.EqualFold(sess.VariantTag, msg.FromVariant) {
 				if sess.IsMuted || sess.PowerTier == types.PowerMuted {
 					return nil, fmt.Errorf("transmitter for @%s is MUTED by Reed Prime. Transmissions suppressed.", msg.FromVariant)
 				}
+				sess.LastHeartbeat = now
+				sess.State = types.VariantActive
+				break
 			}
 		}
 	}
@@ -765,6 +768,24 @@ func (h *Hub) ListenChannel(universeID string) (<-chan *types.Message, error) {
 		h.listeners[universeID] = ch
 	}
 	return ch, nil
+}
+
+// TouchHeartbeat updates LastHeartbeat for an active variant when it polls or sends messages.
+func (h *Hub) TouchHeartbeat(variantTag string) {
+	if strings.TrimSpace(variantTag) == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	cleaned := strings.TrimPrefix(strings.TrimSpace(variantTag), "@")
+	for _, sess := range h.activeVariants {
+		if sess != nil && strings.EqualFold(sess.VariantTag, cleaned) {
+			sess.LastHeartbeat = time.Now().UTC()
+			sess.State = types.VariantActive
+			return
+		}
+	}
 }
 
 // GetActiveVariants returns all currently connected Reeds

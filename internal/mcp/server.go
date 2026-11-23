@@ -667,6 +667,11 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 
 		targetClean := strings.TrimPrefix(strings.TrimSpace(rawTarget), "@")
 		variantClean := strings.TrimPrefix(strings.TrimSpace(rawVariant), "@")
+		if variantClean != "" {
+			s.hub.TouchHeartbeat(variantClean)
+		} else if targetClean != "" {
+			s.hub.TouchHeartbeat(targetClean)
+		}
 
 		// If targetClean matches a variant tag, resolve its universe
 		if variantClean == "" {
@@ -677,6 +682,10 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 					break
 				}
 			}
+		}
+
+		if variantClean != "" {
+			s.hub.TouchHeartbeat(variantClean)
 		}
 
 		// Find relevant channels: universe broadcast channel + variant channel(s)

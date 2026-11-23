@@ -57,6 +57,13 @@ func (d *Dispatcher) Notify(session *types.VariantSession, msg *types.Message) e
 	if msg.ContextSnippet != "" {
 		summary += fmt.Sprintf(" (Context: %s)", msg.ContextSnippet)
 	}
+	if runes := []rune(summary); len(runes) > 800 {
+		ref := msg.ID
+		if ref == "" {
+			ref = "latest"
+		}
+		summary = string(runes[:720]) + fmt.Sprintf("... [truncated — call council_listen to read full message %s]", ref)
+	}
 
 	switch {
 	case strings.Contains(client, "codex"):
@@ -114,7 +121,7 @@ func (d *Dispatcher) notifyAntigravity(convID, workspacePath, message string) er
 		return fmt.Errorf("agentapi executable not found")
 	}
 
-	cleanMsg := strings.ReplaceAll(message, "\n", " ")
+	cleanMsg := strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ", "\t", " ").Replace(message)
 	baseName := strings.ToLower(filepath.Base(exe))
 	var cmd *exec.Cmd
 	if strings.Contains(baseName, "agy") {
@@ -171,26 +178,20 @@ func (d *Dispatcher) resolveAgentAPIExe() string {
 		return p
 	}
 
-	if p, err := exec.LookPath("agentapi.bat"); err == nil {
-		d.cachedAgentAPI = p
-		return p
-	}
-
 	if p, err := exec.LookPath("agentapi.exe"); err == nil {
 		d.cachedAgentAPI = p
 		return p
 	}
 
-	// Try common Antigravity / Gemini paths on Windows
+	// Prefer direct native executables over agentapi.bat (cmd.exe has 8191-char limit & metacharacter issues)
 	home, err := os.UserHomeDir()
 	if err == nil {
-		candidates := []string{
+		exeCandidates := []string{
 			filepath.Join(home, ".gemini", "bin", "agy.exe"),
-			filepath.Join(home, ".gemini", "antigravity", "bin", "agentapi.bat"),
 			filepath.Join(home, ".gemini", "antigravity-ide", "scratch", "antigravity-orchestrator", "bin", "agentapi.exe"),
 			filepath.Join(home, "AppData", "Local", "Programs", "Antigravity", "resources", "app", "bin", "agentapi.exe"),
 		}
-		for _, c := range candidates {
+		for _, c := range exeCandidates {
 			if fileExists(c) {
 				d.cachedAgentAPI = c
 				return c
@@ -214,6 +215,19 @@ func (d *Dispatcher) resolveAgentAPIExe() string {
 					return target
 				}
 			}
+		}
+	}
+
+	// Fallback to agentapi.bat only if no native executable was found
+	if p, err := exec.LookPath("agentapi.bat"); err == nil {
+		d.cachedAgentAPI = p
+		return p
+	}
+	if home != "" {
+		bat := filepath.Join(home, ".gemini", "antigravity", "bin", "agentapi.bat")
+		if fileExists(bat) {
+			d.cachedAgentAPI = bat
+			return bat
 		}
 	}
 
