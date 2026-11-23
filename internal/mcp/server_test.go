@@ -154,3 +154,71 @@ func TestMCP_ConsultTargetVariantAndSelfRoutingRejection(t *testing.T) {
 		t.Fatalf("expected 'warning' field when sender also mentioned itself, got %+v", resWarnMap)
 	}
 }
+
+func TestMCP_ListenIncludeOpenRecovery(t *testing.T) {
+	srv, h, tmpDir := setupTestMCP(t)
+	defer os.RemoveAll(tmpDir)
+
+	pDP := &types.Passport{UniverseID: "desk-pal", Summary: "Desk Pal"}
+	pBmcb := &types.Passport{UniverseID: "bmcbf", Summary: "BMCBF"}
+	_, _, _ = h.RegisterVariant(&types.VariantSession{
+		UniverseID:    "desk-pal",
+		VariantTag:    "ReedDP",
+		ClientAgent:   "antigravity",
+		WorkspacePath: `C:\TCHT\desk-pal`,
+	}, pDP, "")
+	_, _, _ = h.RegisterVariant(&types.VariantSession{
+		UniverseID:    "bmcbf",
+		VariantTag:    "ReedBmcb",
+		ClientAgent:   "antigravity",
+		WorkspacePath: `C:\TCHT\bmcbf`,
+	}, pBmcb, "")
+
+	posted, err := h.PostMessage(&types.Message{
+		FromUniverse: "desk-pal",
+		FromVariant:  "ReedDP",
+		ToUniverse:   "@ReedBmcb",
+		Type:         types.MsgConsultation,
+		Topic:        "Missed wakeup test",
+		Content:      "Can you see this?",
+	})
+	if err != nil {
+		t.Fatalf("PostMessage failed: %v", err)
+	}
+
+	// First drain the in-memory channel
+	_, _ = srv.ExecuteToolForTest("council_listen", map[string]interface{}{
+		"universe_id": "bmcbf",
+		"variant_tag": "ReedBmcb",
+	})
+
+	// Second call without include_open should be empty
+	resEmpty, err := srv.ExecuteToolForTest("council_listen", map[string]interface{}{
+		"universe_id": "bmcbf",
+		"variant_tag": "ReedBmcb",
+	})
+	if err != nil {
+		t.Fatalf("council_listen failed: %v", err)
+	}
+	if resEmpty.(map[string]interface{})["count"].(int) != 0 {
+		t.Fatalf("expected 0 messages after draining in-memory queue")
+	}
+
+	// Third call with include_open=true recovers the unanswered OPEN question
+	resOpen, err := srv.ExecuteToolForTest("council_listen", map[string]interface{}{
+		"universe_id":  "bmcbf",
+		"variant_tag":  "ReedBmcb",
+		"include_open": true,
+	})
+	if err != nil {
+		t.Fatalf("council_listen(include_open=true) failed: %v", err)
+	}
+	openMap := resOpen.(map[string]interface{})
+	if openMap["count"].(int) != 1 {
+		t.Fatalf("expected 1 recovered OPEN question, got %d", openMap["count"].(int))
+	}
+	msgs := openMap["messages"].([]*types.Message)
+	if msgs[0].ID != posted.ID {
+		t.Fatalf("expected recovered message %s, got %s", posted.ID, msgs[0].ID)
+	}
+}

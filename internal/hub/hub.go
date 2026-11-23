@@ -988,8 +988,7 @@ func (h *Hub) notifyWithRetry(dest *types.VariantSession, m *types.Message, mode
 	}
 
 	fmt.Printf("[DOORBELL ERROR] Wakeup failed for @%s after retries: %v\n", dest.VariantTag, lastErr)
-	h.mu.RLock()
-	h.broadcastToWatchers(&types.Message{
+	warnMsg := &types.Message{
 		ID:           "sys-" + generateID(),
 		FromUniverse: "council-chamber",
 		FromVariant:  "Doorbell",
@@ -999,7 +998,11 @@ func (h *Hub) notifyWithRetry(dest *types.VariantSession, m *types.Message, mode
 		Topic:        "Doorbell Delivery Warning",
 		Content:      fmt.Sprintf("Proactive wakeup for @%s (%s) failed after retries; message %s remains queued for council_listen. Error: %v", dest.VariantTag, dest.ClientAgent, m.ID, lastErr),
 		CreatedAt:    time.Now().UTC(),
-	})
+		TTLMinutes:   60,
+	}
+	_ = h.store.AppendMessage(warnMsg)
+	h.mu.RLock()
+	h.broadcastToWatchers(warnMsg)
 	h.mu.RUnlock()
 }
 

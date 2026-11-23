@@ -210,6 +210,10 @@ func (s *Server) getToolDefinitions() []toolDefinition {
 						"type":        "integer",
 						"description": "Max seconds to wait for messages (0 for non-blocking poll, max 30)",
 					},
+					"include_open": map[string]interface{}{
+						"type":        "boolean",
+						"description": "If true, also replays any unanswered OPEN questions addressed to you from the persistent ledger (useful for recovering missed wakeups).",
+					},
 				},
 				"required": []string{"universe_id"},
 			},
@@ -757,6 +761,16 @@ func (s *Server) executeTool(name string, args map[string]interface{}) (interfac
 					}
 					time.Sleep(50 * time.Millisecond)
 				}
+			}
+		}
+
+		if includeOpen, _ := args["include_open"].(bool); includeOpen {
+			var predLineage []string
+			if variantClean != "" {
+				predLineage, _ = s.store.GetPredecessorLineage(variantClean)
+			}
+			for _, openMsg := range s.store.GetOpenQuestionsForVariant(targetClean, variantClean, predLineage, time.Now().UTC()) {
+				addMsg(openMsg)
 			}
 		}
 

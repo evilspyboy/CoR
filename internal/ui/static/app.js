@@ -185,6 +185,7 @@ function renderRoster(universes, activeVariants) {
     const summary = u ? (u.summary || "Active Chamber Variant") : "Active Chamber Variant";
     const tech = u && u.tech_stack ? u.tech_stack.join(", ") : model;
     const isMuted = v.is_muted || power === "MUTED";
+    const idleLabel = formatIdleAge(v.last_heartbeat);
 
     const theme = getReedTheme(handle);
 
@@ -213,7 +214,7 @@ function renderRoster(universes, activeVariants) {
       <div class="summary">${escapeHtml(summary)}</div>
       <div class="meta-row">
         <span class="tech">${escapeHtml(model)} &bull; ${escapeHtml(tech)}</span>
-        <span class="power-badge power-${power}">⚡ ${power}</span>
+        <span>${idleLabel ? `<span class="idle-badge">${escapeHtml(idleLabel)}</span>` : ""}<span class="power-badge power-${power}">⚡ ${power}</span></span>
       </div>
     `;
     rosterList.appendChild(card);
@@ -480,6 +481,16 @@ async function pruneVariant(handle, event) {
   } catch (err) {
     alert("Network error pruning variant: " + err);
   }
+}
+
+function formatIdleAge(isoTime) {
+  if (!isoTime) return "";
+  const ms = Date.now() - new Date(isoTime).getTime();
+  if (isNaN(ms) || ms < 3600000) return "";
+  const hours = Math.floor(ms / 3600000);
+  if (hours < 24) return `idle ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `idle ${days}d`;
 }
 
 connectEvents();
