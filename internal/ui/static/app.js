@@ -123,11 +123,14 @@ function addFeedItem(msg) {
   }
   const toStr = to ? ` ➔ <span ${toStyle}>${escapeHtml(to)}</span>` : "";
 
+  const msgIdBadge = msg.id ? `<button class="msg-id-pill" onclick="copyMsgId('${escapeHtml(msg.id)}', this)" title="Click to copy message ID">${escapeHtml(msg.id)}</button>` : "";
+
   item.innerHTML = `
     <div class="meta">
       <span class="time">${timeStr}</span>
       <span class="source" style="color: ${theme.color}; font-weight: 700;">[${escapeHtml(source)}${toStr}]</span>
       ${msg.topic ? `<span class="topic">#${escapeHtml(msg.topic)}</span>` : ""}
+      ${msgIdBadge}
     </div>
     <div class="content">${escapeHtml(msg.content)}</div>
     ${msg.context_snippet ? `<pre class="snippet" style="background:#0b0f19;padding:6px;margin-top:4px;border-radius:4px;font-size:11px;overflow-x:auto;">${escapeHtml(msg.context_snippet)}</pre>` : ""}
@@ -491,6 +494,15 @@ function formatIdleAge(isoTime) {
   if (hours < 24) return `idle ${hours}h`;
   const days = Math.floor(hours / 24);
   return `idle ${days}d`;
+}
+
+function copyMsgId(id, btn) {
+  if (!id || !navigator.clipboard) return;
+  navigator.clipboard.writeText(id).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = "Copied!";
+    setTimeout(() => { btn.textContent = orig; }, 1200);
+  }).catch(() => {});
 }
 
 connectEvents();
