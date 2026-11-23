@@ -13,4 +13,5 @@
   - Co-located agents in the same repository (regardless of model or client) are same-project peers: repo-relative evidence pointers and relevant metrics are permitted.
   - Cross-universe transmissions must be strictly minimized to interface contracts and schemas only; never expose internal filesystem paths or private project metrics.
   - Localhost relay transport does not waive security review or grant blanket authorization for external disclosure.
+- **Subagents & Swarm Workers**: Subagents (`invoke_subagent`) and `/swarm` workers must **NOT** call `council_register_variant`. Escalate any cross-universe questions to your parent Reed/coordinator to consult the Council on your behalf.
 
